@@ -1,0 +1,207 @@
+// Strategy: ISurveyAnalyticsStrategy.java
+public interface ISurveyAnalyticsStrategy {
+    double calculate(Survey survey);
+}
+
+// Strategy: AverageRatingStrategy.java
+public class AverageRatingStrategy implements ISurveyAnalyticsStrategy {
+    @Override
+    public double calculate(Survey survey) {
+        double total = 0;
+        int count = 0;
+        for (Response response : survey.getResponses()) {
+            for (Map.Entry<Integer, String> entry : response.getAnswers().entrySet()) {
+                int qId = entry.getKey();
+                String option = entry.getValue();
+                Question question = survey.getQuestionById(qId);
+                if (question instanceof RatingQuestion ratingQuestion) {
+                    Integer value = ratingQuestion.getWeight(option);
+                    if (value != null) {
+                        total += value;
+                        count++;
+                    }
+                }
+            }
+        }
+        return count == 0 ? 0 : total / count;
+    }
+}
+
+// Context: SurveyAnalyticsContext.java
+public class SurveyAnalyticsContext {
+    private ISurveyAnalyticsStrategy strategy;
+
+    public void setStrategy(ISurveyAnalyticsStrategy strategy) {
+        this.strategy = strategy;
+    }
+
+    public double execute(Survey survey) {
+        if (strategy == null) throw new IllegalStateException("No strategy set");
+        return strategy.calculate(survey);
+    }
+}
+
+// Factory: QuestionFactory.java
+public class QuestionFactory {
+    public static Question createRatingQuestion(int id, String text, Map<String, Integer> weightedOptions) {
+        return new RatingQuestion(id, text, weightedOptions);
+    }
+}
+
+// Interface: Question.java
+public interface Question {
+    int getId();
+    String getText();
+}
+
+// Model: RatingQuestion.java
+public class RatingQuestion implements Question {
+    private int id;
+    private String text;
+    private Map<String, Integer> weightedOptions;
+
+    public RatingQuestion(int id, String text, Map<String, Integer> weightedOptions) {
+        this.id = id;
+        this.text = text;
+        this.weightedOptions = weightedOptions;
+    }
+
+    public int getId() { return id; }
+    public String getText() { return text; }
+    public Map<String, Integer> getWeightedOptions() { return weightedOptions; }
+    public Integer getWeight(String option) { return weightedOptions.get(option); }
+}
+
+// Model: Survey.java
+public class Survey {
+    private int id;
+    private String title;
+    private List<Question> questions = new ArrayList<>();
+    private List<Response> responses = new ArrayList<>();
+
+    public Survey(int id, String title) {
+        this.id = id;
+        this.title = title;
+    }
+
+    public int getId() { return id; }
+    public String getTitle() { return title; }
+    public List<Question> getQuestions() { return questions; }
+    public List<Response> getResponses() { return responses; }
+
+    public void addQuestion(Question question) {
+        questions.add(question);
+    }
+
+    public void addResponse(Response response) {
+        responses.add(response);
+    }
+
+    public Question getQuestionById(int id) {
+        for (Question q : questions) {
+            if (q.getId() == id) return q;
+        }
+        return null;
+    }
+}
+
+// Model: Response.java
+public class Response {
+    private int userId;
+    private Map<Integer, String> answers;
+
+    public Response(int userId, Map<Integer, String> answers) {
+        this.userId = userId;
+        this.answers = answers;
+    }
+
+    public int getUserId() { return userId; }
+    public Map<Integer, String> getAnswers() { return answers; }
+}
+
+// Service: SurveyService.java
+public class SurveyService {
+    private Map<Integer, Survey> surveys = new ConcurrentHashMap<>();
+    private AtomicInteger surveyIdCounter = new AtomicInteger(1);
+    private AtomicInteger questionIdCounter = new AtomicInteger(100);
+
+    public int createSurvey(String title) {
+        int id = surveyIdCounter.getAndIncrement();
+        surveys.put(id, new Survey(id, title));
+        return id;
+    }
+
+    public void addRatingQuestion(int surveyId, String questionText, Map<String, Integer> weightedOptions) {
+        Survey survey = surveys.get(surveyId);
+        if (survey != null) {
+            int qid = questionIdCounter.getAndIncrement();
+            Question question = QuestionFactory.createRatingQuestion(qid, questionText, weightedOptions);
+            survey.addQuestion(question);
+        }
+    }
+
+    public Survey getSurvey(int id) {
+        return surveys.get(id);
+    }
+}
+
+// Service: ResponseService.java
+public class ResponseService {
+    private SurveyService surveyService;
+
+    public ResponseService(SurveyService surveyService) {
+        this.surveyService = surveyService;
+    }
+
+    public void submitResponse(int surveyId, int userId, Map<Integer, String> answers) {
+        Survey survey = surveyService.getSurvey(surveyId);
+        if (survey != null) {
+            synchronized (survey) {
+                survey.addResponse(new Response(userId, answers));
+            }
+        }
+    }
+}
+
+########################################
+More discussion about currency:
+
+Summary of Concurrency Choices
+Component	Concurrency Mechanism	Why?
+surveys map	ConcurrentHashMap	Allow thread-safe access to surveys map
+id generators	AtomicInteger	Avoid duplicate IDs in concurrent environments
+addResponse()	synchronized(survey)	Serialize writes to mutable list in Survey instance
+
+
+synchronized (survey) {
+    survey.addResponse(new Response(userId, answers));
+}
+It ensures that only one thread can safely modify the responses list of a given Survey at any time.
+
+Why do we need this, even if we're just adding?
+Let’s walk through why this matters:
+
+1. responses is a List<Response> — and it's not thread-safe
+You are using ArrayList under the hood (default implementation of List).
+
+ArrayList.add() is not synchronized.
+
+If two threads call add() simultaneously:
+
+One might overwrite an element.
+
+You might corrupt the internal array structure (size++, elementData[size] = newElement, etc.).
+
+-->
+You could even get a ConcurrentModificationException if you iterate elsewhere.
+
+Alternative (if you want non-blocking concurrency):
+If performance is critical and you expect high concurrency:
+
+Use CopyOnWriteArrayList<Response> for responses
+
+It's thread-safe for reads/writes.
+
+Downside: expensive on writes (copies entire list).
+
+Or use Collections.synchronizedList(...) and manually synchronize during iteration.

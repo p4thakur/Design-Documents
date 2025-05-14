@@ -1,0 +1,249 @@
+public enum ResultOrderType {
+    RECENTLY_PUBLISHED,
+    RECENTLY_UPDATED,
+    RECENTLY_SEARCHED,
+    AUTHOR_NAME
+}
+
+public enum SearchType {
+    UNORDERED,
+    ORDERED,
+    SUBSTRING
+}
+
+public enum SortOrderType {
+    ASC,
+    DESC
+}
+
+#################
+public class Category {
+    private String name;
+    private List<Document> documents;
+    private InvertedIndex invertedIndex;
+
+    public Category(String name) {
+        this.name = name;
+        this.documents = new ArrayList<>();
+        this.invertedIndex = new InvertedIndex();
+    }
+
+    public void addDocument(Document document) {
+        documents.add(document);
+        updateInvertedIndex(document);
+    }
+
+    public void updateInvertedIndex(Document document) {
+        invertedIndex.addDocument(document);
+    }
+}
+
+public class Document {
+    private String name;
+    private String content;
+    private String author;
+    private Date publishDate;
+    private Date lastUpdatedDate;
+    private Date lastSearchedDate;
+
+    public Document(String name, String content, String author) {
+        this.name = name;
+        this.content = content;
+        this.author = author;
+        this.publishDate = new Date();
+        this.lastUpdatedDate = new Date();
+        this.lastSearchedDate = null;
+    }
+}
+
+public class InvertedIndex {
+    private Map<String, Set<Document>> index;
+
+    public InvertedIndex() {
+        index = new HashMap<>();
+    }
+//\W is a regex shorthand for "non-word character"
+//— that is, anything that is not a letter (a-zA-Z), digit (0-9), or underscore (_).
+    public void addDocument(Document document) {
+        String[] words = document.getContent().toLowerCase().split("\\W+");
+        for (String word : words) {
+            if (!index.containsKey(word)) {
+                Set<Document> set = new HashSet<>();
+                set.add(document);
+                index.put(word, set);
+            } else {
+                index.get(word).add(document);
+            }
+        }
+    }
+
+    public Set<Document> getDocumentsForWord(String word) {
+        return index.get(word);
+    }
+}
+
+##########################
+Search stratgey
+
+public interface SearchStrategy {
+    public List<Document> search(Category category, String pattern);
+}
+
+//I can also use Tri instead of Map to store my inverted index
+public class UnorderedSearch implements SearchStrategy {
+    @Override
+    public List<Document> search(Category category, String pattern) {
+        String[] words = pattern.toLowerCase().split(" ");
+        Set<Document> documents = category.getInvertedIndex().getDocumentsForWord(words[0]);
+        for (int i = 1; i < words.length; i++) {
+            documents.retainAll(category.getInvertedIndex().getDocumentsForWord(words[i]));
+        }
+        return new ArrayList<>(documents);
+    }
+}
+//If search is on substring that I need to see the document itself .
+public class SubstringSearch implements SearchStrategy {
+    @Override
+    public List<Document> search(Category category, String pattern) {
+        return category.getDocuments().stream()
+                .filter(doc -> doc.getContent().toLowerCase().contains(pattern.toLowerCase()))
+                .collect(Collectors.toList());
+    }
+}
+
+public class SearchFactory {
+    public static SearchStrategy createSearchStrategy(SearchType type) {
+        return switch (type) {
+            case UNORDERED -> new UnorderedSearch();
+            case ORDERED -> new OrderedSearch();
+            case SUBSTRING -> new SubstringSearch();
+            default -> null;
+        };
+    }
+}
+
+#######################
+public interface ResultOrderStrategy {
+    public List<Document> sort(List<Document> documents, SortOrderType sortOrderType);
+}
+
+public class RecentlyPublishedOrder implements ResultOrderStrategy {
+    @Override
+    public List<Document> sort(List<Document> documents, SortOrderType sortOrderType) {
+        if (sortOrderType == SortOrderType.ASC) {
+            documents.sort(Comparator.comparing(Document::getPublishDate));
+        } else {
+            documents.sort((doc1, doc2) -> doc2.getPublishDate().compareTo(doc1.getPublishDate()));
+        }
+        return documents;
+    }
+}
+
+public class ResultOrderFactory {
+    public static ResultOrderStrategy createResultOrderStrategy(ResultOrderType resultOrderType) {
+        return switch (resultOrderType) {
+            case RECENTLY_PUBLISHED -> new RecentlyPublishedOrder();
+            case RECENTLY_UPDATED -> new RecentlyUpdatedOrder();
+            case RECENTLY_SEARCHED -> new RecentlySearchedOrder();
+            case AUTHOR_NAME -> new AuthorNameOrder();
+            default -> null;
+        };
+    }
+}
+####################3
+
+TechContrippl er control our all above stuff
+public class TechBlogEngine {
+    private static TechBlogEngine instance;
+    private final Map<String, Category> categoryMap;
+
+    private TechBlogEngine() {
+        categoryMap = new HashMap<>();
+    }
+
+    public static synchronized TechBlogEngine getInstance() {
+        if (instance == null) {
+            instance = new TechBlogEngine();
+        }
+        return instance;
+    }
+
+    public void createCategory(String categoryName) {
+        Category category = new Category(categoryName);
+        categoryMap.put(categoryName, category);
+    }
+
+    public void addDocumentToCategory(String categoryName, String documentName, String content, String author) {
+        Category category = categoryMap.get(categoryName);
+        Document document = new Document(documentName, content, author);
+        category.addDocument(document);
+    }
+
+    public List<Document> search(String categoryName, String pattern, SearchType searchType, ResultOrderType resultOrderType, SortOrderType sortOrderType) {
+        Category category = categoryMap.get(categoryName);
+        SearchStrategy searchStrategy = SearchFactory.createSearchStrategy(searchType);
+        List<Document> searchResult = searchStrategy.search(category, pattern);
+        ResultOrderStrategy resultOrderStrategy = ResultOrderFactory.createResultOrderStrategy(resultOrderType);
+        return resultOrderStrategy.sort(searchResult, sortOrderType);
+    }
+}
+
+################################
+
+ Main method (Front end call)
+
+ public class Main {
+     public static void main(String[] args) {
+         TechBlogEngine techBlogEngine = TechBlogEngine.getInstance();
+
+         techBlogEngine.createCategory("General Tech Articles");
+         techBlogEngine.createCategory("AI/ML Articles");
+         techBlogEngine.createCategory("Blockchain Articles");
+
+         techBlogEngine.addDocumentToCategory("AI/ML Articles",
+                 "Deep understanding of Neural Networks and Reinforcement Learning",
+                 "Deep understanding of Neural Networks and Reinforcement Learning.",
+                 "John Doe 1");
+
+         techBlogEngine.addDocumentToCategory("AI/ML Articles",
+                 "A Beginner's Guide to Machine Learning Models",
+                 "A Beginner's Guide to Machine Learning Models.",
+                 "John Doe 2");
+
+         techBlogEngine.addDocumentToCategory("AI/ML Articles",
+                 "Deep Learning in Computer Vision: Use Cases and Future",
+                 "Deep Learning in Computer Vision: Use Cases and Future.",
+                 "John Doe 3");
+
+         techBlogEngine.addDocumentToCategory("AI/ML Articles",
+                 "Exploring Reinforcement Learning with Practical Examples",
+                 "Exploring Reinforcement Learning with Practical Examples.",
+                 "John Doe 4");
+
+         techBlogEngine.addDocumentToCategory("AI/ML Articles",
+                 "Reinforcement Learning and applications of Deep Neural Networks in Healthcare",
+                 "Reinforcement Learning and applications of Deep Neural Networks in Healthcare.",
+                 "John Doe 5");
+
+         List<Document> documentList = techBlogEngine.search("AI/ML Articles", "Deep Learning", SearchType.UNORDERED,
+                 ResultOrderType.RECENTLY_PUBLISHED, SortOrderType.ASC);
+         System.out.println("Unordered search results for 'Deep Learning' in 'AI/ML Articles' category:");
+         for (Document document : documentList) {
+             System.out.println(document.getName());
+         }
+
+         documentList = techBlogEngine.search("AI/ML Articles", "Deep Learning", SearchType.ORDERED,
+                 ResultOrderType.RECENTLY_PUBLISHED, SortOrderType.ASC);
+         System.out.println("\nOrdered search results for 'Deep Learning' in 'AI/ML Articles' category:");
+         for (Document document : documentList) {
+             System.out.println(document.getName());
+         }
+
+         documentList = techBlogEngine.search("AI/ML Articles", "Deep Learning", SearchType.SUBSTRING,
+                 ResultOrderType.AUTHOR_NAME, SortOrderType.ASC);
+         System.out.println("\nSubstring search results for 'Deep Learning' in 'AI/ML Articles' category:");
+         for (Document document : documentList) {
+             System.out.println(document.getName());
+         }
+     }
+ }

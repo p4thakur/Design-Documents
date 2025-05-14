@@ -1,0 +1,330 @@
+// ColumnType.java
+public enum ColumnType {
+    INT, STRING;
+}
+
+// ColumnSchema.java
+public class ColumnSchema {
+    private final String name;
+    private final ColumnType type;
+
+    public ColumnSchema(String name, ColumnType type) {
+        this.name = name;
+        this.type = type;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public ColumnType getType() {
+        return type;
+    }
+}
+
+// Constraint: KeyConstraint.java
+public interface KeyConstraint {
+    void validate(Table table, Row row) throws IllegalArgumentException;
+}
+
+// Constraint: PrimaryKeyConstraint.java
+public class PrimaryKeyConstraint implements KeyConstraint {
+    private List<String> keyColumns;
+
+    public PrimaryKeyConstraint(List<String> keyColumns) {
+        this.keyColumns = keyColumns;
+    }
+
+    @Override
+    public void validate(Table table, Row newRow) {
+        for (Row existing : table.getRows()) {
+            boolean match = true;
+            for (String col : keyColumns) {
+                if (!Objects.equals(existing.get(col), newRow.get(col))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                throw new IllegalArgumentException("Duplicate primary key violation: " + keyColumns);
+            }
+        }
+    }
+}
+
+// Model: Row.java
+public class Row {
+    private Map<String, String> values = new HashMap<>();
+
+    public void put(String column, String value) {
+        values.put(column, value);
+    }
+
+    public String get(String column) {
+        return values.get(column);
+    }
+
+    public Map<String, String> getAll() {
+        return values;
+    }
+}
+
+// Index: Index.java
+public class Index {
+    private Map<String, List<Row>> indexMap = new HashMap<>();
+    private String column;
+
+    public Index(String column) {
+        this.column = column;
+    }
+
+    public void add(Row row) {
+        String key = row.get(column);
+        indexMap.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+    }
+
+    public List<Row> search(String value) {
+        return indexMap.getOrDefault(value, Collections.emptyList());
+    }
+
+    public String getColumn() {
+        return column;
+    }
+}
+
+// Model: Table.java
+public class Table {
+    private String name;
+    private List<ColumnSchema> schema;
+    private List<Row> rows = new ArrayList<>();
+    private List<KeyConstraint> constraints = new ArrayList<>();
+    private Map<String, Index> indexes = new HashMap<>();
+
+    public Table(String name, List<ColumnSchema> schema) {
+        this.name = name;
+        this.schema = schema;
+    }
+
+    public void addConstraint(KeyConstraint constraint) {
+        constraints.add(constraint);
+    }
+
+    public void addIndex(String column) {
+        if (schema.stream().noneMatch(col -> col.getName().equals(column))) {
+            throw new IllegalArgumentException("Invalid column for index");
+        }
+        indexes.put(column, new Index(column));
+    }
+
+    private void validateTypes(Row row) {
+        for (ColumnSchema col : schema) {
+            String value = row.get(col.getName());
+            if (value == null) continue;
+            switch (col.getType()) {
+                case INT:
+                    try {
+                        Integer.parseInt(value);
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException("Column " + col.getName() + " expects INT but got: " + value);
+                    }
+                    break;
+                case STRING:
+                    break; // no-op
+            }
+        }
+    }
+
+    public void insert(Row row) {
+        validateTypes(row);
+        for (KeyConstraint constraint : constraints) {
+            constraint.validate(this, row);
+        }
+        rows.add(row);
+        for (Index index : indexes.values()) {
+            index.add(row);
+        }
+    }
+
+    public List<Row> query(String column, String value) {
+        if (indexes.containsKey(column)) {
+            return indexes.get(column).search(value);
+        } else {
+            List<Row> result = new ArrayList<>();
+            for (Row row : rows) {
+                if (value.equals(row.get(column))) {
+                    result.add(row);
+                }
+            }
+            return result;
+        }
+    }
+
+    public List<Row> getRows() {
+        return rows;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public List<ColumnSchema> getSchema() {
+        return schema;
+    }
+}
+
+// Factory: TableFactory.java
+public class TableFactory {
+    public static Table createTable(String name, List<ColumnSchema> schema, List<String> primaryKeyCols, List<String> indexCols) {
+        Table table = new Table(name, schema);
+        if (primaryKeyCols != null && !primaryKeyCols.isEmpty()) {
+            table.addConstraint(new PrimaryKeyConstraint(primaryKeyCols));
+        }
+        if (indexCols != null) {
+            for (String col : indexCols) {
+                table.addIndex(col);
+            }
+        }
+        return table;
+    }
+}
+
+// Model: Database.java
+public class Database {
+    private String name;
+    private Map<String, Table> tables = new HashMap<>();
+
+    public Database(String name) {
+        this.name = name;
+    }
+
+    public void createTable(String tableName, List<ColumnSchema> schema, List<String> primaryKeys, List<String> indexCols) {
+        if (tables.containsKey(tableName)) {
+            throw new IllegalArgumentException("Table already exists");
+        }
+        Table table = TableFactory.createTable(tableName, schema, primaryKeys, indexCols);
+        tables.put(tableName, table);
+    }
+
+    public Table getTable(String tableName) {
+        return tables.get(tableName);
+    }
+
+    public Collection<Table> getAllTables() {
+        return tables.values();
+    }
+}
+
+// Manager: DatabaseManager.java
+public class DatabaseManager {
+    private Map<String, Database> databases = new HashMap<>();
+
+    public void createDatabase(String dbName) {
+        if (databases.containsKey(dbName)) {
+            throw new IllegalArgumentException("Database already exists");
+        }
+        databases.put(dbName, new Database(dbName));
+    }
+
+    public Database getDatabase(String dbName) {
+        return databases.get(dbName);
+    }
+}
+
+// Example usage: Main.java
+public class Main {
+    public static void main(String[] args) {
+        DatabaseManager dbManager = new DatabaseManager();
+        dbManager.createDatabase("MyDB");
+        Database db = dbManager.getDatabase("MyDB");
+
+        List<ColumnSchema> schema = List.of(
+            new ColumnSchema("id", ColumnType.INT),
+            new ColumnSchema("name", ColumnType.STRING),
+            new ColumnSchema("age", ColumnType.INT)
+        );
+
+        List<String> primaryKeys = List.of("id");
+        List<String> indexes = List.of("name");
+
+        db.createTable("Users", schema, primaryKeys, indexes);
+        Table userTable = db.getTable("Users");
+
+        Row row1 = new Row();
+        row1.put("id", "1");
+        row1.put("name", "Alice");
+        row1.put("age", "25");
+
+        Row row2 = new Row();
+        row2.put("id", "2");
+        row2.put("name", "Bob");
+        row2.put("age", "30");
+
+        userTable.insert(row1);
+        userTable.insert(row2);
+
+        List<Row> results = userTable.query("name", "Alice");
+        System.out.println("Query results for name=Alice:");
+        for (Row r : results) {
+            System.out.println(r.getAll());
+        }
+
+        Row duplicate = new Row();
+        duplicate.put("id", "1");
+        duplicate.put("name", "Charlie");
+        duplicate.put("age", "40");
+
+        try {
+            userTable.insert(duplicate);
+        } catch (IllegalArgumentException e) {
+            System.out.println("Insert failed: " + e.getMessage());
+        }
+    }
+}
+
+
+#############################
+Design Pattern Used?
+Strategy Pattern (implicitly):
+Table can have multiple strategies for lookup:
+
+If indexed → use Index strategy.
+
+If not → use fallback linear scan strategy.
+-->
+indexMap:
+Stores the mapping from a column value to all rows that contain that value.
+
+For example:
+If indexing on column "name" and we insert rows with names "Alice" and "Bob", it becomes:
+
+java
+Copy
+Edit
+{
+  "Alice" -> [Row1],
+  "Bob" -> [Row2]
+}
+
+----> I can have seprate table in furture that's why factory
+Future extensions might include:
+PartitionedTable – where rows are split based on some key.
+
+VersionedTable – where each row modification is stored with a timestamp.
+
+AuditableTable – logs changes for auditing purposes.
+
+DistributedTable – to simulate sharding.
+
+ColumnarTable – optimized for read-heavy analytics workloads
+
+
+---->
+Factory Pattern: For creating tables and rows.
+
+Strategy Pattern: For flexible query execution.
+
+Command Pattern: To encapsulate operations like insert, update, and delete.
+
+Observer Pattern (if needed): For events like schema change or data insert.
+
+Decorator or Composite: For layered queries or index enhancements.

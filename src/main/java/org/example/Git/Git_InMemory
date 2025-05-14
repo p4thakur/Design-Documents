@@ -1,0 +1,159 @@
+public class File {
+    private final String name;
+    private final String content;
+
+    public File(String name, String content) {
+        this.name = name;
+        this.content = content;
+    }
+
+    public String getName() { return name; }
+    public String getContent() { return content; }
+}
+
+
+public class Commit {
+    private final String id;
+    private final String message;
+    private final Map<String, File> files;
+    private final Commit parent;
+
+    public Commit(String id, String message, Map<String, File> files, Commit parent) {
+        this.id = id;
+        this.message = message;
+        this.files = new HashMap<>(files);
+        this.parent = parent;
+    }
+
+    public String getId() { return id; }
+    public Commit getParent() { return parent; }
+    public Map<String, File> getFiles() { return files; }
+}
+
+public class Branch {
+    private final String name;
+    private Commit head;
+
+    public Branch(String name, Commit head) {
+        this.name = name;
+        this.head = head;
+    }
+
+    public String getName() { return name; }
+    public Commit getHead() { return head; }
+    public void setHead(Commit commit) { this.head = commit; }
+}
+
+
+public class Repository {
+    private final Map<String, Branch> branches = new HashMap<>();
+    private final Map<String, File> stagingArea = new HashMap<>();
+    private Branch currentBranch;
+
+    public Repository() {
+        // Initialize with a main branch and a root commit
+        Commit root = new Commit("0", "initial", new HashMap<>(), null);
+        Branch main = new Branch("main", root);
+        branches.put("main", main);
+        currentBranch = main;
+    }
+
+    public void addFile(String name, String content) {
+        stagingArea.put(name, new File(name, content));
+    }
+
+    public void commit(String message) {
+        Map<String, File> newFiles = new HashMap<>(currentBranch.getHead().getFiles());
+        newFiles.putAll(stagingArea);
+        Commit newCommit = new Commit(UUID.randomUUID().toString(), message, newFiles, currentBranch.getHead());
+        currentBranch.setHead(newCommit);
+        stagingArea.clear();
+    }
+
+    public void createBranch(String name) {
+        branches.put(name, new Branch(name, currentBranch.getHead()));
+    }
+
+    public void checkoutBranch(String name) {
+        if (!branches.containsKey(name)) {
+            throw new IllegalArgumentException("Branch does not exist");
+        }
+        currentBranch = branches.get(name);
+        stagingArea.clear();
+    }
+
+    public void rollbackTo(String commitId) {
+        Commit curr = currentBranch.getHead();
+        while (curr != null && !curr.getId().equals(commitId)) {
+            curr = curr.getParent();
+        }
+        if (curr == null) throw new IllegalArgumentException("Commit not found in branch history");
+        currentBranch.setHead(curr);
+    }
+
+    public void log() {
+        Commit c = currentBranch.getHead();
+        while (c != null) {
+            System.out.println("Commit: " + c.getId() + " - " + c.getMessage());
+            c = c.getParent();
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Repository repo = new Repository();
+
+        // Add and commit file1 to main
+        repo.addFile("file1.txt", "Initial content");
+        repo.commit("Initial commit");
+
+        // Add and commit file2 to main
+        repo.addFile("file2.txt", "Second file content");
+        repo.commit("Added file2");
+
+        // Create a new branch called "feature"
+        repo.createBranch("feature");
+
+        // Switch to feature branch
+        repo.checkoutBranch("feature");
+
+        // Add a change in feature branch
+        repo.addFile("file1.txt", "Updated in feature branch");
+        repo.commit("Updated file1 in feature");
+
+        // Log commits in feature branch
+        System.out.println("Feature branch log:");
+        repo.log();
+
+        // Switch back to main
+        repo.checkoutBranch("main");
+
+        // Log commits in main branch
+        System.out.println("\nMain branch log:");
+        repo.log();
+
+        // Now rollback feature branch to initial commit
+        repo.checkoutBranch("feature");
+        String rollbackId = repo.getCurrentBranch().getHead().getParent().getParent().getId(); // root commit ID
+        repo.rollbackTo(rollbackId);
+
+        // Log after rollback
+        System.out.println("\nFeature branch log after rollback:");
+        repo.log();
+    }
+}
+
+
+#########################
+Design Patterns Used
+Command Pattern (can be used later to support undo/redo or scripting interface).
+
+Memento Pattern (the Commit class works like a Memento capturing system state).
+
+Factory Pattern (optional for creating Commit or Branch objects).
+
+Strategy Pattern (can be used for branching strategies, merge algorithms in future extensions).
+####################
+
+read about merge if you have time....

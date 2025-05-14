@@ -1,0 +1,207 @@
+//THis is some thing I can code in 90 munutes
+**There are two categories of cars: SUV and hatchback.
+  Maintain a count of how many SUV and hatchback cars enter the premise
+  Calculate the payment each car has to make based upon the rates as hatchback parking as 10 rupees per hour and SUV being 20 rupees an hour.
+  In case if hatchback occupancy is full then hatchback cars can occupy SUV spaces but with hatchback rates.
+  During exit there needs to be the system to inform the user
+  */
+  
+public enum SlotType {
+    COMPACT, SEDAN
+}
+3. ParkingSlot
+
+public class ParkingSlot {
+    private final int slotId;
+    private final SlotType type;
+    private boolean occupied;
+    private Vehicle vehicle;
+    private long entryTime;
+
+    // Constructor, getters, setters
+}
+4. Vehicle
+
+public abstract class Vehicle {
+    private final String number;
+    private final SlotType preferredType;
+
+    public Vehicle(String number, SlotType preferredType) {
+        this.number = number;
+        this.preferredType = preferredType;
+    }
+
+    public String getNumber() { return number; }
+    public SlotType getPreferredType() { return preferredType; }
+}
+
+public class CompactCar extends Vehicle {
+    public CompactCar(String number) {
+        super(number, SlotType.COMPACT);
+    }
+}
+
+public class SedanCar extends Vehicle {
+    public SedanCar(String number) {
+        super(number, SlotType.SEDAN);
+    }
+}
+5. FeeStrategy Interface
+
+public interface FeeStrategy {
+    int calculateFee(long durationHours);
+}
+
+public class CompactFeeStrategy implements FeeStrategy {
+    public int calculateFee(long hours) {
+        return (int) hours * 10;
+    }
+}
+
+public class SedanFeeStrategy implements FeeStrategy {
+    public int calculateFee(long hours) {
+        return (int) hours * 20;
+    }
+}
+6. ParkingLot
+Handles:
+
+Slot allocation
+
+Vehicle entry/exit
+
+Fee calculation
+
+
+public class ParkingLot {
+    private final List<ParkingSlot> compactSlots;
+    private final List<ParkingSlot> sedanSlots;
+    private final Map<String, ParkingSlot> activeVehicles = new HashMap<>();
+
+    public ParkingLot(int compactCount, int sedanCount) {
+        this.compactSlots = createSlots(compactCount, SlotType.COMPACT);
+        this.sedanSlots = createSlots(sedanCount, SlotType.SEDAN);
+    }
+
+    private List<ParkingSlot> createSlots(int count, SlotType type) {
+        List<ParkingSlot> list = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            list.add(new ParkingSlot(i, type));
+        }
+        return list;
+    }
+
+    public boolean parkVehicle(Vehicle vehicle) {
+        ParkingSlot slot = findSlot(vehicle);
+        if (slot == null) return false;
+        slot.setOccupied(true);
+        slot.setVehicle(vehicle);
+        slot.setEntryTime(System.currentTimeMillis());
+        activeVehicles.put(vehicle.getNumber(), slot);
+        return true;
+    }
+
+    private ParkingSlot findSlot(Vehicle vehicle) {
+        List<ParkingSlot> preferred = getSlotList(vehicle.getPreferredType());
+        for (ParkingSlot s : preferred) {
+            if (!s.isOccupied()) return s;
+        }
+        // Fallback: Compact cars can use sedan slots
+        if (vehicle.getPreferredType() == SlotType.COMPACT) {
+            for (ParkingSlot s : sedanSlots) {
+                if (!s.isOccupied()) return s;
+            }
+        }
+        return null;
+    }
+
+    public int unparkVehicle(String number) {
+        ParkingSlot slot = activeVehicles.remove(number);
+        if (slot == null) throw new IllegalArgumentException("Vehicle not found");
+        long duration = (System.currentTimeMillis() - slot.getEntryTime()) / (1000 * 60 * 60);
+        FeeStrategy feeStrategy = getFeeStrategy(slot.getVehicle(), slot.getType());
+        int fee = feeStrategy.calculateFee(duration == 0 ? 1 : duration);
+        slot.setOccupied(false);
+        slot.setVehicle(null);
+        return fee;
+    }
+
+    private FeeStrategy getFeeStrategy(Vehicle vehicle, SlotType usedSlotType) {
+        if (vehicle.getPreferredType() == SlotType.COMPACT) return new CompactFeeStrategy();
+        return new SedanFeeStrategy();
+    }
+
+    public List<Vehicle> getAllParkedVehicles() {
+        return activeVehicles.values().stream()
+            .map(ParkingSlot::getVehicle)
+            .collect(Collectors.toList());
+    }
+
+    private List<ParkingSlot> getSlotList(SlotType type) {
+        return type == SlotType.COMPACT ? compactSlots : sedanSlots;
+    }
+}
+🧵 Thread-Safety Consideration
+Use ConcurrentHashMap for activeVehicles.
+
+Wrap parkVehicle and unparkVehicle with synchronized blocks if needed.
+
+Would you like me to organize this into files or walk through a sample main method usage?
+
+
+
+
+
+
+You said:
+yes give me mail method to tes it
+
+
+ChatGPT said:
+Here’s a main method you can use to test the Vehicle Parking System we just designed:
+
+
+public class Main {
+    public static void main(String[] args) throws InterruptedException {
+        ParkingLot parkingLot = new ParkingLot(2, 2); // 2 compact, 2 sedan slots
+
+        Vehicle car1 = new CompactCar("C-123");
+        Vehicle car2 = new CompactCar("C-456");
+        Vehicle car3 = new CompactCar("C-789"); // Will use a sedan slot
+        Vehicle car4 = new SedanCar("S-111");
+        Vehicle car5 = new SedanCar("S-222");
+
+        System.out.println("Parking car1: " + parkingLot.parkVehicle(car1)); // true
+        System.out.println("Parking car2: " + parkingLot.parkVehicle(car2)); // true
+        System.out.println("Parking car3 (compact, overflow): " + parkingLot.parkVehicle(car3)); // true (uses sedan slot)
+        System.out.println("Parking car4: " + parkingLot.parkVehicle(car4)); // true
+        System.out.println("Parking car5 (should fail, no space): " + parkingLot.parkVehicle(car5)); // false
+
+        // Simulate 1-hour wait
+        Thread.sleep(1000); // For real hourly fee test, use mocked timestamps
+
+        // Unpark car1 and show fee
+        int fee1 = parkingLot.unparkVehicle("C-123");
+        System.out.println("Car1 unparked, fee: ₹" + fee1);
+
+        // Admin view of currently parked cars
+        System.out.println("Currently parked vehicles:");
+        for (Vehicle v : parkingLot.getAllParkedVehicles()) {
+            System.out.println(" - " + v.getNumber() + " (" + v.getPreferredType() + ")");
+        }
+    }
+}
+📝 Sample Output:
+yaml
+Copy
+Edit
+Parking car1: true
+Parking car2: true
+Parking car3 (compact, overflow): true
+Parking car4: true
+Parking car5 (should fail, no space): false
+Car1 unparked, fee: ₹10
+Currently parked vehicles:
+ - C-456 (COMPACT)
+ - C-789 (COMPACT)
+ - S-111 (SEDAN)
