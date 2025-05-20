@@ -1,0 +1,275 @@
+Note first understand  with user . when they Ask you to implement the catch
+first ask them.  do you want simplate chatch with unlimited bound?
+or its limited bound . if they limited than ask they what will be evication stratgey.
+at this point it won't be simlar adding remove question. I will need to impmnet LRU in that case.
+
+Now when  they ask for transaction in above scenrio than. Again Ask him do this still want to follow LRU  in transsction
+? So things will get complex(time consuming)
+---> Look Need of  DLL was because of evication strathy  if that' not the case than below solution is perfect
+
+If they say inmemory data base hat below is solution
+
+##################################
+import java.util.*;
+
+public class TransactionalCache {
+    private Map<String, String> base;
+    private Deque<Transaction> txStack;
+
+    public TransactionalCache() {
+        base = new HashMap<>();
+        txStack = new ArrayDeque<>();
+    }
+
+    // Represents one level of transaction
+    private static class Transaction {
+        Map<String, String> writes = new HashMap<>();
+        Set<String> deletes = new HashSet<>();
+    }
+
+    // Put key-value into current transaction or base
+    public void put(String key, String value) {
+        if (!txStack.isEmpty()) {
+            txStack.peek().writes.put(key, value);
+            txStack.peek().deletes.remove(key);
+        } else {
+            base.put(key, value);
+        }
+    }
+
+    // Get value, considering active transactions
+    public String get(String key) {
+    //why for loop? Since get try to get value of key from latest transaction. so we start
+    //check from transaction stack till last to see if find the value
+        for (Transaction tx : txStack) {
+            if (tx.writes.containsKey(key)) return tx.writes.get(key);
+            if (tx.deletes.contains(key)) return null;//this is importan. If I removed it in current transaction than null
+
+        }
+        return base.get(key);
+    }
+
+    // Delete key in current transaction or base
+    public void delete(String key) {
+        if (!txStack.isEmpty()) {
+            txStack.peek().writes.remove(key);
+            txStack.peek().deletes.add(key);
+        } else {
+            base.remove(key);
+        }
+    }
+
+    // Start a new transaction
+    public void begin() {
+        txStack.push(new Transaction());
+    }
+
+    // Rollback top transaction
+    public boolean rollback() {
+        if (txStack.isEmpty()) return false;
+        txStack.pop();
+        return true;
+    }
+
+    // Commit top transaction into base or previous tx. Rrmeber there can be multiple transaction
+    public boolean commit() {
+        if (txStack.isEmpty()) return false;
+
+        Transaction top = txStack.pop();
+
+        if (!txStack.isEmpty()) {
+            // Merge into parent transaction. transfer both write and delet to parent
+            Transaction parent = txStack.peek();
+            parent.writes.putAll(top.writes);
+            parent.deletes.addAll(top.deletes);//Reeber here I just tneed to pass my remove operaton to parent
+        } else {
+            // Apply to base
+            for (String key : top.deletes) base.remove(key);
+            base.putAll(top.writes);
+        }
+
+        return true;
+    }
+
+    // For testing/debugging
+    public void printBase() {
+        System.out.println("BASE: " + base);
+    }
+
+    public static void main(String[] args) {
+        TransactionalCache cache = new TransactionalCache();
+
+        cache.put("a", "1");
+        System.out.println(cache.get("a")); // 1
+
+        cache.begin();
+        cache.put("a", "2");
+        System.out.println(cache.get("a")); // 2
+
+        cache.rollback();
+        System.out.println(cache.get("a")); // 1
+
+        cache.begin();
+        cache.put("a", "3");
+        cache.commit();
+        System.out.println(cache.get("a")); // 3
+    }
+}
+
+##########################
+note above code only handle  transaction. I mean when we say commit it only handle  last transaction.
+
+They can ask you to to do olny Commit(N) transaction.
+So just be ready
+commit(t) - Commits only the first t transactions.
+rollback(t) – rolls back  only the last t transactions.
+
+--> things  and side cae where i can make mist.
+  1: when commiting check if you have parent transaction. if yes than this require trafer all operation to parent
+  2: In get , if I am fetching data from transaction than if its not present in write result than alsocheck in delete
+  if its in delete than return null. Only after this you should jump to next transaction.
+
+
+Problem Satement:
+
+Create takes a String key and a String value - create(“key”, “val”) - return the stored value.
+If it exists, call update the function. (Hi Reader, if this feels like an normal over-write, wait until Part 3)
+
+Read takes a String key - read(“key”) – Returns the stored value, else error, or friendly message.
+
+Update takes a String key and String value – update(“key”, “val”) – returns the updated value, if it doesn’t exist, return and error or friendly message.
+
+Delete takes a String key – delete(“key”) and deletes it from the store, else error, or friendly message
+
+Example 1:
+
+- read(“key1”) – returns “No Key associated”
+- create(“key1”, “val1”) – returns “val1”
+- read(“key1”) – returns “val1”
+- update(“key1”, “val2”) – returns “val2”
+- read(“key1”) – returns “val2”
+- delete(“key1”) – returns “Delete Success”
+- read(“key1”) – returns “No key associated”
+Part 2
+
+Enable transactions for your data store. A transaction starts with begin() and
+operations like READ, CREATE, UPDATE, DELETE can take place during this time.
+After these operation, the transaction is ended by either a commit()
+that commits everything permanently in the data store or rollback() that reverts everything that was performed during the transaction window.
+Notice that I highlighted the key-word everything.
+
+Example 1:
+
+- create(“key1”, “val1”)
+- create(“key2”, “val2”)
+- create(“key3”, “val3”)
+- read(“key1”) – returns “val1”
+- read(“key2”) – returns “val2”
+- read(“key3”) – returns “val3”
+- begin() – this begins a transaction
+- create(“key3”, “val8”)
+- read(“key3”) – returns val8
+- create(“key5”, “val5”)
+- read(“key5”) – returns val5
+- update(“key5”, “val7”
+- read(“key5”) – returns val7
+- update(“key2”, “val7”
+- read(“key2”) – returns val7
+- update(“key2”, “val8”
+- read(“key2”) – returns val8
+- delete(“key1”)
+- read(“key1”) – No Key Associated
+- commit() – this commits everything
+After committing, you should still access the items in the data store with their update values.
+
+- read(“key1”) – returns val8
+- read(“key2”) – No Key Associated
+- read(“key3”) – returns val8
+Example 2: Disregard previous state of the Data Store
+
+- create(“key1”, “val1”)
+- create(“key2”, “val2”)
+- create(“key3”, “val3”)
+- read(“key1”) – returns “val1”
+- read(“key2”) – returns “val2”
+- read(“key3”) – returns “val3”
+
+- begin() – this begins a transaction
+- create(“key3”, “val8”)
+- read(“key3”) – returns val8
+- create(“key5”, “val5”)
+- read(“key5”) – returns val5
+- update(“key5”, “val7”
+- read(“key5”) – returns val7
+- update(“key2”, “val7”
+- read(“key2”) – returns val7
+- update(“key2”, “val8”
+- read(“key2”) – returns val8
+- delete(“key1”)
+- read(“key1”) – No Key Associated
+- rollback() – this rolls back everything
+- read(“key1”) – returns val1
+- read(“key2”) – returns val2
+- read(“key3”) – returns val3
+- read(“key5”) – No Key Associated
+Part 3
+
+Make the transactions limited. In Part 2, commit() commits everything while rollback() rolls back everything.
+This part will ensure that you can only –
+
+commit(t) - Commits only the first t transactions.
+rollback(t) – rolls back  only the last t transactions.
+For this part, Please note that only those operations that change the state of our data store are counted as transactions.
+
+Example 1:
+
+- create(“key1”, “val1”)
+- create(“key2”, “val2”)
+- create(“key3”, “val3”)
+- read(“key1”) – returns “val1”
+- read(“key2”) – returns “val2”
+- read(“key3”) – returns “val3”
+- begin() – this begins a transaction
+- create(“key3”, “val8”)
+- read(“key3”) – returns val8
+- create(“key5”, “val5”)
+- read(“key5”) – returns val5
+- update(“key5”, “val7”
+- read(“key5”) – returns val7
+- update(“key2”, “val7”
+- read(“key2”) – returns val7
+- update(“key2”, “val8”
+- read(“key2”) – returns val8
+- delete(“key1”)
+- read(“key1”) – No Key Associated
+- commit(2) – this commits only the first two transactions
+- read(“key1”) – returns val1
+- read(“key2”) – returns val2
+- read(“key3”) – returns val8
+- read(“key5”) - returns val5
+Example 2:
+
+- create(“key1”, “val1”)
+- create(“key2”, “val2”)
+- create(“key3”, “val3”)
+- read(“key1”) – returns “val1”
+- read(“key2”) – returns “val2”
+- read(“key3”) – returns “val3”
+- begin() – this begins a transaction
+- create(“key3”, “val8”)
+- read(“key3”) – returns val8
+- create(“key5”, “val5”)
+- read(“key5”) – returns val5
+- update(“key5”, “val7”
+- read(“key5”) – returns val7
+- update(“key2”, “val7”
+- read(“key2”) – returns val7
+- update(“key2”, “val8”
+- read(“key2”) – returns val8
+- delete(“key1”)
+- read(“key1”) – No Key Associated
+- rollback(2) – this rolls back only the last two transactions
+- read(“key1”) – returns val1
+- read(“key2”) – returns val7
+- read(“key3”) – returns val8
+- read(“key5”) - returns val7

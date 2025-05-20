@@ -1,0 +1,142 @@
+import java.util.*;
+
+class Delivery {
+    long startEpoch;
+    long endEpoch;
+
+    public Delivery(long startEpoch, long endEpoch) {
+        this.startEpoch = startEpoch;
+        this.endEpoch = endEpoch;
+    }
+
+    public long getDurationInSeconds() {
+        return endEpoch - startEpoch;
+    }
+
+    public boolean isBefore(long cutoff) {
+        return endEpoch <= cutoff;
+    }
+}
+
+class Driver {
+    int driverId;
+    double hourlyRate;
+    List<Delivery> deliveries;
+
+    public Driver(int driverId, double hourlyRate) {
+        this.driverId = driverId;
+        this.hourlyRate = hourlyRate;
+        this.deliveries = new ArrayList<>();
+    }
+
+    public void addDelivery(long start, long end) {
+        deliveries.add(new Delivery(start, end));
+    }
+
+    public double getTotalPayment() {
+        double total = 0.0;
+        for (Delivery d : deliveries) {
+            total += (d.getDurationInSeconds() / 3600.0) * hourlyRate;
+        }
+        return total;
+    }
+
+    public double getPaidUntil(long cutoffEpoch) {
+        double total = 0.0;
+        for (Delivery d : deliveries) {
+            if (d.isBefore(cutoffEpoch)) {
+                total += (d.getDurationInSeconds() / 3600.0) * hourlyRate;
+            }
+        }
+        return total;
+    }
+
+    public double getUnpaidSince(long cutoffEpoch) {
+        double total = 0.0;
+        for (Delivery d : deliveries) {
+            if (!d.isBefore(cutoffEpoch)) {
+                total += (d.getDurationInSeconds() / 3600.0) * hourlyRate;
+            }
+        }
+        return total;
+    }
+}
+
+class DeliveryManager {
+    private Map<Integer, Driver> drivers = new HashMap<>();
+
+    public void addDriver(int driverId, double hourlyRate) {
+        drivers.put(driverId, new Driver(driverId, hourlyRate));
+    }
+
+    public void addOrder(int driverId, long startEpoch, long endEpoch) {
+        if (!drivers.containsKey(driverId)) {
+            throw new IllegalArgumentException("Driver does not exist.");
+        }
+        drivers.get(driverId).addDelivery(startEpoch, endEpoch);
+    }
+
+    public double getTotalPayment() {
+        double total = 0.0;
+        for (Driver d : drivers.values()) {
+            total += d.getTotalPayment();
+        }
+        return total;
+    }
+
+    public double getPaidUntil(long cutoffEpoch) {
+        double total = 0.0;
+        for (Driver d : drivers.values()) {
+            total += d.getPaidUntil(cutoffEpoch);
+        }
+        return total;
+    }
+
+    public double getUnpaidSince(long cutoffEpoch) {
+        double total = 0.0;
+        for (Driver d : drivers.values()) {
+            total += d.getUnpaidSince(cutoffEpoch);
+        }
+        return total;
+    }
+}
+
+
+########################################
+Firs requiment is total cost. if they ask total cost they need in  O(1) time. than I can
+keep a running total. At time adding delivey only colcat cost of each delivery
+
+lass Driver {
+    int driverId;
+    double hourlyRate;
+    List<Delivery> deliveries;
+    double totalCost = 0.0; // Running total
+
+    public Driver(int driverId, double hourlyRate) {
+        this.driverId = driverId;
+        this.hourlyRate = hourlyRate;
+        this.deliveries = new ArrayList<>();
+    }
+
+    public void addDelivery(long start, long end) {
+        Delivery d = new Delivery(start, end);
+        deliveries.add(d);
+        totalCost += (d.getDurationInSeconds() / 3600.0) * hourlyRate;
+    }
+
+    public double getTotalCost() {
+        return totalCost;
+    }
+}
+
+and within manger keep golcost varaible that can be update
+
+ublic void addOrder(int driverId, long startEpoch, long endEpoch) {
+    if (!drivers.containsKey(driverId)) {
+        throw new IllegalArgumentException("Driver does not exist.");
+    }
+    Driver driver = drivers.get(driverId);
+    double cost = driver.addDelivery(startEpoch, endEpoch);
+    globalTotalCost += cost;
+}
+

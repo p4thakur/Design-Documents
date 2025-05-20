@@ -1,0 +1,163 @@
+ Problem Statement
+Implement a spreadsheet with the following operations:
+
+set(cell: String, value: String)
+
+Sets the value or expression of the given cell. A cell is named like A1, B2, etc.
+
+The value can be:
+
+A constant (e.g., "5").
+
+An arithmetic expression (e.g., =5+9, =A1+B1-3).
+
+print()
+
+Prints each cell with both:
+
+The raw input (stored string), and
+
+The computed value (evaluated number).
+
+If a cell references another cell that hasn't been set yet, its value is 0.
+
+
+#########################################
+import java.util.*;
+import java.util.regex.*;
+
+public class Spreadsheet {
+    private static class Cell {
+        String rawValue; // like "5" or "=A1+B2"
+        int computedValue;
+
+        Cell(String rawValue) {
+            this.rawValue = rawValue;
+        }
+    }
+
+    private Map<String, Cell> cells = new HashMap<>();
+
+    public void set(String cell, String value) {
+        cells.put(cell, new Cell(value));
+    }
+
+    public void print() {
+        for (String cell : cells.keySet()) {
+            Cell c = cells.get(cell);
+            int val = evaluate(cell, new HashSet<>());
+            System.out.println(cell + " = " + c.rawValue + " -> " + val);
+        }
+    }
+
+    private int evaluate(String cell, Set<String> visited) {
+        if (!cells.containsKey(cell)) return 0;
+
+        if (visited.contains(cell)) {
+            throw new RuntimeException("Cyclic dependency detected at: " + cell);
+        }
+
+        visited.add(cell);
+        Cell c = cells.get(cell);
+
+        String val = c.rawValue.trim();
+        if (!val.startsWith("=")) {
+            c.computedValue = Integer.parseInt(val);
+            return c.computedValue;
+        }
+
+        String expr = val.substring(1); // remove '='
+        List<String> tokens = tokenize(expr);
+
+        int result = 0;
+        int sign = 1;
+        for (String token : tokens) {
+            if (token.equals("+")) {
+                sign = 1;
+            } else if (token.equals("-")) {
+                sign = -1;
+            } else if (Character.isLetter(token.charAt(0))) {
+                int v = evaluate(token, new HashSet<>(visited));
+                result += sign * v;
+            } else {
+                result += sign * Integer.parseInt(token);
+            }
+        }
+
+        c.computedValue = result;
+        return result;
+    }
+
+
+    public static void main(String[] args) {
+        Spreadsheet sheet = new Spreadsheet();
+        sheet.set("A1", "=5+9+-8");
+        sheet.set("A2", "5");
+        sheet.set("A3", "=A1+A2");
+        sheet.set("B1", "=A3+7");
+        sheet.set("C1", "=B1+A2");
+        sheet.print();
+    }
+}
+
+
+private List<String> tokenize(String expr) {
+    List<String> tokens = new ArrayList<>();
+    int i = 0;
+    int n = expr.length();
+
+    while (i < n) {
+        char ch = expr.charAt(i);
+
+        // Skip spaces (optional)
+        if (ch == ' ') {
+            i++;
+            continue;
+        }
+
+        // Operator
+        if (ch == '+' || ch == '-') {
+            tokens.add(Character.toString(ch));
+            i++;
+        }
+        // Cell reference like A1, B12
+        else if (Character.isLetter(ch)) {
+            StringBuilder sb = new StringBuilder();
+            while (i < n && Character.isLetter(expr.charAt(i))) {
+                sb.append(expr.charAt(i++));
+            }
+            while (i < n && Character.isDigit(expr.charAt(i))) {
+                sb.append(expr.charAt(i++));
+            }
+            tokens.add(sb.toString());
+        }
+        // Integer
+        else if (Character.isDigit(ch)) {
+            StringBuilder sb = new StringBuilder();
+            while (i < n && Character.isDigit(expr.charAt(i))) {
+                sb.append(expr.charAt(i++));
+            }
+            tokens.add(sb.toString());
+        } else {
+            throw new IllegalArgumentException("Invalid character in expression: " + ch);
+        }
+    }
+
+    return tokens;
+}
+
+
+###########################
+e have a spreadsheet with the following formulas:
+
+ini
+Copy
+Edit
+A1 = B1 + 1
+B1 = C1 + 2
+C1 = A1 + 3   ← ❗This introduces a cycle
+Our code handle that
+
+Not don't confuse this probkem with cell have valye like AB+3 and smhtinlike thus
+assumption is we have sing value a to Z. that's why I call recursion only for
+of character to find its value

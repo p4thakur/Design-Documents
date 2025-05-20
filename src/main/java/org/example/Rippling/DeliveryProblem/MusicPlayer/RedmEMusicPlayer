@@ -1,0 +1,177 @@
+We need a music player with:
+
+int addSong(String title)
+➤ Adds a song and returns a new songId starting from 1.
+
+void playSong(int songId, int userId)
+➤ Tracks a user playing a song.
+
+void printMostPlayedSongs()
+➤ Sort by number of unique users who played each song.
+
+List<String> getLastThreeSongs(int userId)
+➤ Track last 3 unique songs played by a user in order.
+
+
+###############################################
+Map<Integer, Song> → songId to Song metadata.
+
+Map<Integer, Set<Integer>> → songId to unique userIds who played it.
+
+//LinkedList in java is DDl
+Map<Integer, LinkedList<Integer>> → userId to last 3 unique songIds (preserve order, no duplicates)
+
+import java.util.*;
+
+class Song {
+    int id;
+    String title;
+
+    Song(int id, String title) {
+        this.id = id;
+        this.title = title;
+    }
+}
+
+class MusicPlayer {
+    private int songIdCounter = 1;
+
+    // Song ID to Song Object
+    private Map<Integer, Song> songs = new HashMap<>();
+
+    // Song ID to Set of unique userIds who played it
+    private Map<Integer, Set<Integer>> songToUsers = new HashMap<>();
+
+    // User ID to LinkedHashSet (for unique song history, preserve order)
+    private Map<Integer, LinkedList<Integer>> userToHistory = new HashMap<>();
+
+    private static final int MAX_HISTORY = 3;
+
+    public int addSong(String songTitle) {
+        int id = songIdCounter++;
+        Song song = new Song(id, songTitle);
+        songs.put(id, song);
+        songToUsers.put(id, new HashSet<>());
+        return id;
+    }
+
+    public void playSong(int songId, int userId) {
+        if (!songs.containsKey(songId)) {
+            System.out.println("Invalid song ID.");
+            return;
+        }
+
+        // Add user to song's unique users
+        songToUsers.get(songId).add(userId);
+
+        // Maintain last 3 unique songs per user
+        userToHistory.putIfAbsent(userId, new LinkedList<>());
+        LinkedList<Integer> history = userToHistory.get(userId);
+        history.removeIf(id -> id == songId); // remove if already exists
+        history.addFirst(songId); // add to front
+        if (history.size() > MAX_HISTORY) {
+            history.removeLast(); // keep only last 3
+        }
+    }
+
+    public void printMostPlayedSongs() {
+        List<Map.Entry<Integer, Set<Integer>>> list = new ArrayList<>(songToUsers.entrySet());
+
+        list.sort((a, b) -> {
+            int cmp = Integer.compare(b.getValue().size(), a.getValue().size());
+            if (cmp == 0) return a.getKey() - b.getKey(); // break tie by songId
+            return cmp;
+        });
+
+        for (Map.Entry<Integer, Set<Integer>> entry : list) {
+            int songId = entry.getKey();
+            System.out.println(songs.get(songId).title + " → " + entry.getValue().size() + " unique plays");
+        }
+    }
+
+    //This like MRU Cahche. I am using MaP and LL
+    public List<String> getLastThreeSongs(int userId) {
+        List<String> result = new ArrayList<>();
+        if (!userToHistory.containsKey(userId)) return result;
+        
+       //I am iterating over linkLis here
+        for (int songId : userToHistory.get(userId)) {
+            result.add(songs.get(songId).title);
+        }
+        return result;
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        MusicPlayer player = new MusicPlayer();
+
+        int s1 = player.addSong("Shape of You");
+        int s2 = player.addSong("Believer");
+        int s3 = player.addSong("Counting Stars");
+        int s4 = player.addSong("Thunder");
+
+        player.playSong(s1, 101);
+        player.playSong(s2, 101);
+        player.playSong(s3, 101);
+        player.playSong(s1, 102);
+        player.playSong(s4, 101);
+
+        System.out.println("Most Played Songs:");
+        player.printMostPlayedSongs(); // ordered by unique plays
+
+        System.out.println("\nLast 3 songs played by user 101:");
+        System.out.println(player.getLastThreeSongs(101)); // should show Thunder, Counting Stars, Believer
+    }
+}
+
+
+
+problem with  THis desing. to get leaderboard top  songs.  I am sorting it everytime. NLogn
+So
+if call to this printMostPlayedSongs is frequent than its beterr to precallcuate this value.
+So I wll build whil playing the song.(this will affect the complexity of playing song. BUt I can tell him in production
+I can do this step of building asyncronously.)
+Tell him if I cannl play song more frequncty than above apprach is good. because if I use tree map building during
+play song it effect paln song time  comlexy
+
+
+TreeMap<Integer, Set<Integer>> freqMap = new TreeMap<>(Collections.reverseOrder());
+
+In PlaySong add:
+public void playSong(int songId, int userId) {
+    if (!songs.containsKey(songId)) return;
+
+    // If new user for this song
+    Set<Integer> users = songToUsers.get(songId);
+    if (users.add(userId)) {
+        int oldCount = songToCount.getOrDefault(songId, 0);
+        int newCount = oldCount + 1;
+        songToCount.put(songId, newCount);
+
+        // Remove from old freqMap
+        if (oldCount > 0) {
+            Set<Integer> oldSet = freqMap.get(oldCount);
+            oldSet.remove(songId);
+            if (oldSet.isEmpty()) freqMap.remove(oldCount);
+        }
+
+        // Add to new freqMap
+        freqMap.computeIfAbsent(newCount, k -> new HashSet<>()).add(songId);
+    }
+
+    // Update user play history as before (same as earlier)
+    userToHistory.putIfAbsent(userId, new LinkedList<>());
+    LinkedList<Integer> history = userToHistory.get(userId);
+    history.removeIf(id -> id == songId);
+    history.addFirst(songId);
+    if (history.size() > MAX_HISTORY) history.removeLast();
+}
+
+T.c above O(F)--F number of uniqie
+
+than just traverse it
+
+
+I can't fuck up:(. Pleasebro . this company can give me money needed. so please do it acche se.
+
