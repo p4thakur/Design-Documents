@@ -1,0 +1,316 @@
+// File: AppVersionManagementSystem.java
+
+import java.util.*;
+
+public class AppVersionManagementSystem {
+    private final Map<String, App> apps = new HashMap<>();
+    private final Map<String, Device> devices = new HashMap<>();
+
+    // Factory Method
+    public RolloutStrategy getRolloutStrategy(String type, Set<String> betaDevices, int percentage) {
+        return switch (type.toUpperCase()) {
+            case "BETA" -> new BetaRolloutStrategy(betaDevices);
+            case "PERCENTAGE" -> new PercentageRolloutStrategy(percentage);
+            default -> throw new IllegalArgumentException("Invalid strategy");
+        };
+    }
+
+    public void uploadNewVersion(String appName, String versionId, String osType, String minOsVersion, String fileContent) {
+        apps.putIfAbsent(appName, new App(appName));
+        App app = apps.get(appName);
+        String fileUrl = uploadFile(fileContent);
+        AppVersion newVersion = new AppVersion.Builder()
+                .setVersionId(versionId)
+                .setOsType(osType)
+                .setMinOsVersion(minOsVersion)
+                .setFileUrl(fileUrl)
+                .build();
+        app.addVersion(newVersion);
+    }
+
+    public void createUpdatePatch(String appName, String fromVersion, String toVersion) {
+        App app = apps.get(appName);
+        AppVersion from = app.getVersion(fromVersion);
+        AppVersion to = app.getVersion(toVersion);
+        String diff = createDiffPack(getFile(from.getFileUrl()), getFile(to.getFileUrl()));
+        String patchUrl = uploadFile(diff);
+        app.addPatch(new UpdatePatch(fromVersion, toVersion, patchUrl));
+    }
+
+    public void releaseVersion(String appName, String versionId, RolloutStrategy strategy) {
+        App app = apps.get(appName);
+        AppVersion version = app.getVersion(versionId);
+        for (Device device : devices.values()) {
+            if (strategy.shouldRolloutTo(device, version)) {
+                executeTask(new UpdateCommand(app, device, version));
+            }
+        }
+    }
+
+    public boolean isAppVersionSupported(String appName, String versionId, Device device) {
+        AppVersion version = apps.get(appName).getVersion(versionId);
+        return version.getOsType().equals(device.getOsType()) && version.getMinOsVersion().compareTo(device.getOsVersion()) <= 0;
+    }
+
+    public boolean checkForInstall(String appName, Device device) {
+        App app = apps.get(appName);
+        return app.getLatestVersion().getMinOsVersion().compareTo(device.getOsVersion()) <= 0;
+    }
+
+    public boolean checkForUpdates(String appName, Device device) {
+        App app = apps.get(appName);
+        return device.getInstalledAppVersion(appName) == null ||
+                !device.getInstalledAppVersion(appName).equals(app.getLatestVersion().getVersionId());
+    }
+
+    public void executeTask(TaskCommand taskCommand) {
+        taskCommand.execute();
+    }
+
+    public void registerDevice(Device device) {
+        devices.put(device.getDeviceId(), device);
+    }
+
+    // Dummy external methods
+    private String uploadFile(String fileContent) {
+        return UUID.randomUUID() + "_file_url";
+    }
+
+    private String getFile(String url) {
+        return "fileContentOf_" + url;
+    }
+
+    private String createDiffPack(String from, String to) {
+        return "diff_of_" + from + "_and_" + to;
+    }
+}
+
+// File: App.java
+
+class App {
+    private final String name;
+    private final Map<String, AppVersion> versions = new HashMap<>();
+    private final Map<String, UpdatePatch> patches = new HashMap<>();
+
+    public App(String name) {
+        this.name = name;
+    }
+
+    public void addVersion(AppVersion version) {
+        versions.put(version.getVersionId(), version);
+    }
+
+    public AppVersion getVersion(String versionId) {
+        return versions.get(versionId);
+    }
+
+    public AppVersion getLatestVersion() {
+        return versions.values().stream().max(Comparator.comparing(AppVersion::getVersionId)).orElse(null);
+    }
+
+    public void addPatch(UpdatePatch patch) {
+        patches.put(patch.getFromVersion() + "_" + patch.getToVersion(), patch);
+    }
+
+    public UpdatePatch getPatch(String from, String to) {
+        return patches.get(from + "_" + to);
+    }
+}
+
+// File: AppVersion.java
+
+class AppVersion {
+    private final String versionId;
+    private final String osType;
+    private final String minOsVersion;
+    private final String fileUrl;
+
+    private AppVersion(Builder builder) {
+        this.versionId = builder.versionId;
+        this.osType = builder.osType;
+        this.minOsVersion = builder.minOsVersion;
+        this.fileUrl = builder.fileUrl;
+    }
+
+    public String getVersionId() { return versionId; }
+    public String getOsType() { return osType; }
+    public String getMinOsVersion() { return minOsVersion; }
+    public String getFileUrl() { return fileUrl; }
+
+    public static class Builder {
+        private String versionId;
+        private String osType;
+        private String minOsVersion;
+        private String fileUrl;
+
+        public Builder setVersionId(String versionId) { this.versionId = versionId; return this; }
+        public Builder setOsType(String osType) { this.osType = osType; return this; }
+        public Builder setMinOsVersion(String minOsVersion) { this.minOsVersion = minOsVersion; return this; }
+        public Builder setFileUrl(String fileUrl) { this.fileUrl = fileUrl; return this; }
+        public AppVersion build() { return new AppVersion(this); }
+    }
+}
+
+// File: UpdatePatch.java
+
+class UpdatePatch {
+    private final String fromVersion;
+    private final String toVersion;
+    private final String patchUrl;
+
+    public UpdatePatch(String fromVersion, String toVersion, String patchUrl) {
+        this.fromVersion = fromVersion;
+        this.toVersion = toVersion;
+        this.patchUrl = patchUrl;
+    }
+
+    public String getFromVersion() { return fromVersion; }
+    public String getToVersion() { return toVersion; }
+    public String getPatchUrl() { return patchUrl; }
+}
+
+// File: Device.java
+
+class Device {
+    private final String deviceId;
+    private final String osType;
+    private final String osVersion;
+    private final Map<String, String> installedApps = new HashMap<>();
+
+    public Device(String deviceId, String osType, String osVersion) {
+        this.deviceId = deviceId;
+        this.osType = osType;
+        this.osVersion = osVersion;
+    }
+
+    public String getDeviceId() { return deviceId; }
+    public String getOsType() { return osType; }
+    public String getOsVersion() { return osVersion; }
+    public String getInstalledAppVersion(String appName) { return installedApps.get(appName); }
+    public void installApp(String appName, String versionId) { installedApps.put(appName, versionId); }
+}
+
+// Rollout Strategy Interface and Implementations
+
+interface RolloutStrategy {
+    boolean shouldRolloutTo(Device device, AppVersion version);
+}
+
+class BetaRolloutStrategy implements RolloutStrategy {
+    private final Set<String> betaDevices;
+
+    public BetaRolloutStrategy(Set<String> betaDevices) {
+        this.betaDevices = betaDevices;
+    }
+
+    @Override
+    public boolean shouldRolloutTo(Device device, AppVersion version) {
+        return betaDevices.contains(device.getDeviceId());
+    }
+}
+
+class PercentageRolloutStrategy implements RolloutStrategy {
+    private final int percentage;
+
+    public PercentageRolloutStrategy(int percentage) {
+        this.percentage = percentage;
+    }
+
+    @Override
+    public boolean shouldRolloutTo(Device device, AppVersion version) {
+        return Math.abs(device.getDeviceId().hashCode()) % 100 < percentage;
+    }
+}
+
+// Command Pattern for Task Execution
+
+interface TaskCommand {
+    void execute();
+}
+
+class InstallCommand implements TaskCommand {
+    private final App app;
+    private final Device device;
+
+    public InstallCommand(App app, Device device) {
+        this.app = app;
+        this.device = device;
+    }
+
+    @Override
+    public void execute() {
+        AppVersion latest = app.getLatestVersion();
+        device.installApp(app.getName(), latest.getVersionId());
+        System.out.println("Installed version " + latest.getVersionId() + " on device " + device.getDeviceId());
+    }
+}
+
+class UpdateCommand implements TaskCommand {
+    private final App app;
+    private final Device device;
+    private final AppVersion newVersion;
+
+    public UpdateCommand(App app, Device device, AppVersion newVersion) {
+        this.app = app;
+        this.device = device;
+        this.newVersion = newVersion;
+    }
+
+    @Override
+    public void execute() {
+        String fromVersion = device.getInstalledAppVersion(app.getName());
+        UpdatePatch patch = app.getPatch(fromVersion, newVersion.getVersionId());
+        if (patch != null) {
+            System.out.println("Updating device " + device.getDeviceId() + " from " + fromVersion + " to " + newVersion.getVersionId());
+            device.installApp(app.getName(), newVersion.getVersionId());
+        } else {
+            System.out.println("Patch not found. Installing directly.");
+            device.installApp(app.getName(), newVersion.getVersionId());
+        }
+    }
+}
+
+
+########################################################3
+public class Main {
+    public static void main(String[] args) {
+        AppVersionManagementSystem system = new AppVersionManagementSystem();
+
+        // Step 1: Register Devices
+        Device device1 = new Device("device-001", "Android", "13.0");
+        Device device2 = new Device("device-002", "Android", "12.0");
+        Device device3 = new Device("device-003", "Android", "11.0");
+        system.registerDevice(device1);
+        system.registerDevice(device2);
+        system.registerDevice(device3);
+
+        // Step 2: Upload App Versions
+        system.uploadNewVersion("MyApp", "1.0.0", "Android", "11.0", "fileContent_v1");
+        system.uploadNewVersion("MyApp", "1.1.0", "Android", "12.0", "fileContent_v2");
+        system.uploadNewVersion("MyApp", "2.0.0", "Android", "13.0", "fileContent_v3");
+
+        // Step 3: Install App on Devices
+        system.installAppOnDevice("MyApp", "device-001");
+        system.installAppOnDevice("MyApp", "device-002");
+        system.installAppOnDevice("MyApp", "device-003");
+
+        // Step 4: Create Patch from 1.0.0 to 1.1.0
+        system.createUpdatePatch("MyApp", "1.0.0", "1.1.0");
+
+        // Step 5: Release 1.1.0 to 100% of devices
+        RolloutStrategy fullRollout = system.getRolloutStrategy("PERCENTAGE", null, 100);
+        system.releaseVersion("MyApp", "1.1.0", fullRollout);
+
+        // Step 6: Check Updates
+        System.out.println("Device 1 needs update: " + system.checkForUpdates("MyApp", device1));
+        System.out.println("Device 2 needs update: " + system.checkForUpdates("MyApp", device2));
+        System.out.println("Device 3 needs update: " + system.checkForUpdates("MyApp", device3));
+
+        // Step 7: Rollback 1.1.0 to 1.0.0 only for device-002
+        Set<String> rollbackSet = new HashSet<>();
+        rollbackSet.add("device-002");
+        RolloutStrategy betaRollback = system.getRolloutStrategy("BETA", rollbackSet, 0);
+        system.rollbackVersion("MyApp", "1.0.0", betaRollback);
+    }
+}
+

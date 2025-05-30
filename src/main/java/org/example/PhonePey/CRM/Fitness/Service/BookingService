@@ -1,0 +1,70 @@
+package org.example.PhonePey.CRM.Fitness.Service;
+
+public class BookingService {
+    private final ClassStore classStore = ClassStore.getInstance();
+    private final UserStore userStore = UserStore.getInstance();
+    private final BookingEventManager eventManager = new BookingEventManager();
+    private final WaitlistStrategy waitlistStrategy = new FIFOWaitlistStrategy();
+
+    public void bookClass(User user, FitnessClass fc) {
+        BookingStrategy strategy = StrategyFactory.getStrategy(user.getTier());
+
+        if (user.getBookings().size() >= strategy.getBookingLimit()) {
+            throw new RuntimeException("Booking limit exceeded for user tier");
+        }
+
+        for (UUID bookedClassId : user.getBookings()) {
+            FitnessClass bookedClass = classStore.getById(bookedClassId);
+            if (bookedClass != null && bookedClass.getStartTime().equals(fc.getStartTime())) {
+                throw new RuntimeException("User already booked another class at the same time");
+            }
+        }
+
+        if (fc.isFull()) {
+            fc.getWaitlist().offer(user.getUserId());
+        } else {
+            fc.getBookedUsers().add(user.getUserId());
+            user.getBookings().add(fc.getClassId());
+        }
+    }
+
+    public void userCancel(User user, FitnessClass fc) {
+        if (fc.getStartTime().minusMinutes(30).isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Cannot cancel within 30 minutes of class start");
+        }
+        cancelBooking(user, fc);
+    }
+
+    public void adminCancelClass(FitnessClass fc) {
+        classStore.all().removeIf(c -> c.getClassId().equals(fc.getClassId()));
+    }
+
+    private void cancelBooking(User user, FitnessClass fc) {
+        boolean removed = fc.getBookedUsers().remove(user.getUserId());
+        if (!removed) return;
+
+        user.getBookings().remove(fc.getClassId());
+
+        promoteFromWaitlist(fc);
+    }
+
+    private void promoteFromWaitlist(FitnessClass fc) {
+        UUID nextUserId = waitlistStrategy.getNextUser(fc);
+        if (nextUserId == null) return;
+
+        User nextUser = userStore.getById(nextUserId);
+
+        for (UUID bookedClassId : nextUser.getBookings()) {
+            FitnessClass bookedClass = classStore.getById(bookedClassId);
+            if (bookedClass != null && bookedClass.getStartTime().equals(fc.getStartTime())) {
+                return;
+            }
+        }
+
+        fc.getBookedUsers().add(nextUserId);
+        nextUser.getBookings().add(fc.getClassId());
+
+        eventManager.onWaitlistPromotion(nextUser, fc);
+    }
+}
+

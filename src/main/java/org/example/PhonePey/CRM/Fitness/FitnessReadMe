@@ -1,0 +1,290 @@
+import java.util.*;
+
+// --- Strategy Pattern: Booking Limit ---
+
+interface BookingLimitStrategy {
+    int getBookingLimit();
+}
+
+class PlatinumStrategy implements BookingLimitStrategy {
+    public int getBookingLimit() { return 10; }
+}
+
+class GoldStrategy implements BookingLimitStrategy {
+    public int getBookingLimit() { return 5; }
+}
+
+class SilverStrategy implements BookingLimitStrategy {
+    public int getBookingLimit() { return 3; }
+}
+
+// --- User class with strategy ---
+
+
+########################################
+// TierType.java
+public enum TierType {
+    PLATINUM, GOLD, SILVER
+}
+
+// User.java
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
+public class User {
+    private final UUID userId;
+    private final String name;
+    private final TierType tier;
+    private final Set<UUID> bookings = new HashSet<>();
+
+    public User(String name, TierType tier) {
+        this.userId = UUID.randomUUID();
+        this.name = name;
+        this.tier = tier;
+    }
+
+    public UUID getUserId() { return userId; }
+    public String getName() { return name; }
+    public TierType getTier() { return tier; }
+    public Set<UUID> getBookings() { return bookings; }
+}
+
+// FitnessClass.java
+import java.time.LocalDateTime;
+import java.util.*;
+
+public class FitnessClass {
+    private final UUID classId;
+    private final String name;
+    private final LocalDateTime startTime;
+    private final int capacity;
+    private final Set<UUID> bookedUsers = new HashSet<>();
+    private final Queue<UUID> waitlist = new LinkedList<>();
+
+    public FitnessClass(String name, LocalDateTime startTime, int capacity) {
+        this.classId = UUID.randomUUID();
+        this.name = name;
+        this.startTime = startTime;
+        this.capacity = capacity;
+    }
+
+    public UUID getClassId() { return classId; }
+    public String getName() { return name; }
+    public LocalDateTime getStartTime() { return startTime; }
+    public int getCapacity() { return capacity; }
+    public Set<UUID> getBookedUsers() { return bookedUsers; }
+    public Queue<UUID> getWaitlist() { return waitlist; }
+
+    public boolean isFull() {
+        return bookedUsers.size() >= capacity;
+    }
+}
+
+
+// UserStore.java
+import java.util.*;
+
+public class UserStore {
+    private static final UserStore instance = new UserStore();
+    private final Map<UUID, User> users = new HashMap<>();
+
+    public static UserStore getInstance() { return instance; }
+    public void save(User user) { users.put(user.getUserId(), user); }
+    public User getById(UUID id) { return users.get(id); }
+}
+
+// ClassStore.java
+import java.util.*;
+
+public class ClassStore {
+    private static final ClassStore instance = new ClassStore();
+    private final Map<UUID, FitnessClass> classes = new HashMap<>();
+
+    public static ClassStore getInstance() { return instance; }
+    public void save(FitnessClass fc) { classes.put(fc.getClassId(), fc); }
+    public FitnessClass getById(UUID id) { return classes.get(id); }
+    public Collection<FitnessClass> all() { return classes.values(); }
+}
+
+// UserService.java
+public class UserService {
+    private final UserStore store = UserStore.getInstance();
+
+    public User register(String name, TierType tier) {
+        User user = new User(name, tier);
+        store.save(user);
+        return user;
+    }
+}
+
+// ClassService.java
+import java.time.LocalDateTime;
+
+public class ClassService {
+    private final ClassStore store = ClassStore.getInstance();
+
+    public FitnessClass createClass(String name, LocalDateTime startTime, int capacity) {
+        FitnessClass fc = new FitnessClass(name, startTime, capacity);
+        store.save(fc);
+        return fc;
+    }
+}
+
+// BookingService.java
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+public class BookingService {
+    private final ClassStore classStore = ClassStore.getInstance();
+    private final UserStore userStore = UserStore.getInstance();
+    private final BookingEventManager eventManager = new BookingEventManager();
+    private final WaitlistStrategy waitlistStrategy = new FIFOWaitlistStrategy();
+
+    public void bookClass(User user, FitnessClass fc) {
+        BookingStrategy strategy = StrategyFactory.getStrategy(user.getTier());
+
+        if (user.getBookings().size() >= strategy.getBookingLimit()) {
+            throw new RuntimeException("Booking limit exceeded for user tier");
+        }
+
+        for (UUID bookedClassId : user.getBookings()) {
+            FitnessClass bookedClass = classStore.getById(bookedClassId);
+            if (bookedClass != null && bookedClass.getStartTime().equals(fc.getStartTime())) {
+                throw new RuntimeException("User already booked another class at the same time");
+            }
+        }
+
+        if (fc.isFull()) {
+            fc.getWaitlist().offer(user.getUserId());
+        } else {
+            fc.getBookedUsers().add(user.getUserId());
+            user.getBookings().add(fc.getClassId());
+        }
+    }
+
+    public void userCancel(User user, FitnessClass fc) {
+        if (fc.getStartTime().minusMinutes(30).isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Cannot cancel within 30 minutes of class start");
+        }
+        cancelBooking(user, fc);
+    }
+
+    public void adminCancelClass(FitnessClass fc) {
+        classStore.all().removeIf(c -> c.getClassId().equals(fc.getClassId()));
+    }
+
+    private void cancelBooking(User user, FitnessClass fc) {
+        boolean removed = fc.getBookedUsers().remove(user.getUserId());
+        if (!removed) return;
+
+        user.getBookings().remove(fc.getClassId());
+
+        promoteFromWaitlist(fc);
+    }
+
+    private void promoteFromWaitlist(FitnessClass fc) {
+        UUID nextUserId = waitlistStrategy.getNextUser(fc);
+        if (nextUserId == null) return;
+
+        User nextUser = userStore.getById(nextUserId);
+
+        for (UUID bookedClassId : nextUser.getBookings()) {
+            FitnessClass bookedClass = classStore.getById(bookedClassId);
+            if (bookedClass != null && bookedClass.getStartTime().equals(fc.getStartTime())) {
+                return;
+            }
+        }
+
+        fc.getBookedUsers().add(nextUserId);
+        nextUser.getBookings().add(fc.getClassId());
+
+        eventManager.onWaitlistPromotion(nextUser, fc);
+    }
+}
+
+// WaitlistStrategy.java
+import java.util.UUID;
+
+public interface WaitlistStrategy {
+    UUID getNextUser(FitnessClass fc);
+}
+
+// FIFOWaitlistStrategy.java
+import java.util.UUID;
+
+public class FIFOWaitlistStrategy implements WaitlistStrategy {
+    public UUID getNextUser(FitnessClass fc) {
+        return fc.getWaitlist().poll();
+    }
+}
+
+// BookingEventManager.java
+public class BookingEventManager {
+    public void onWaitlistPromotion(User user, FitnessClass fc) {
+        System.out.printf("[Event] User %s promoted from waitlist for class %s%n",
+                          user.getName(), fc.getName());
+    }
+}
+// BookingStrategy.java
+public interface BookingStrategy {
+    int getBookingLimit();
+}
+
+// PlatinumBookingStrategy.java
+public class PlatinumBookingStrategy implements BookingStrategy {
+    public int getBookingLimit() { return 10; }
+}
+
+// GoldBookingStrategy.java
+public class GoldBookingStrategy implements BookingStrategy {
+    public int getBookingLimit() { return 5; }
+}
+
+// SilverBookingStrategy.java
+public class SilverBookingStrategy implements BookingStrategy {
+    public int getBookingLimit() { return 3; }
+}
+
+// StrategyFactory.java
+public class StrategyFactory {
+    public static BookingStrategy getStrategy(TierType tier) {
+        return switch (tier) {
+            case PLATINUM -> new PlatinumBookingStrategy();
+            case GOLD -> new GoldBookingStrategy();
+            case SILVER -> new SilverBookingStrategy();
+        };
+    }
+}
+
+
+// App.java
+import java.time.LocalDateTime;
+
+public class App {
+    public static void main(String[] args) {
+        UserService userService = new UserService();
+        ClassService classService = new ClassService();
+        BookingService bookingService = new BookingService();
+
+        User alice = userService.register("alice", TierType.GOLD);
+        User bob = userService.register("bob", TierType.SILVER);
+
+        FitnessClass yoga = classService.createClass("Yoga", LocalDateTime.now().plusHours(1), 1);
+        FitnessClass dance = classService.createClass("Dance", LocalDateTime.now().plusHours(2), 2);
+
+        bookingService.bookClass(alice, yoga);
+        bookingService.bookClass(bob, yoga); // Bob will go to waitlist
+        bookingService.bookClass(alice, dance);
+
+        bookingService.userCancel(alice, yoga); // Bob gets promoted
+    }
+}
+
+
+####################
+Operation	Risk	Fix
+Booking a class	Overbooking	Lock on FitnessClass
+Cancel + Waitlist promote	Double promotion	Lock on FitnessClass
+Accessing UserStore	Inconsistent user state	Use ConcurrentHashMap internally
+Accessing ClassStore	Inconsistent class state	Use ConcurrentHashMap internally

@@ -1,0 +1,195 @@
+package com.communication;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+// Enums
+enum ChannelType {
+    EMAIL, SMS, SOUNDBOX
+}
+
+// Common Interfaces
+interface RequestValidator {
+    void validate(Map<String, String> requestData);
+}
+
+interface ChannelHandler {
+    void dispatch(Map<String, String> requestData);
+}
+
+// Validators
+class EmailValidator implements RequestValidator {
+    public void validate(Map<String, String> data) {
+        if (!data.containsKey("sender") || !data.containsKey("receiver") ||
+            !data.containsKey("subject") || !data.containsKey("message")) {
+            throw new IllegalArgumentException("Missing email fields");
+        }
+    }
+}
+
+class SMSValidator implements RequestValidator {
+    public void validate(Map<String, String> data) {
+        if (!data.containsKey("mobile") || !data.containsKey("message")) {
+            throw new IllegalArgumentException("Missing SMS fields");
+        }
+    }
+}
+
+class SoundboxValidator implements RequestValidator {
+    public void validate(Map<String, String> data) {
+        if (!data.containsKey("deviceId") || !data.containsKey("sound")) {
+            throw new IllegalArgumentException("Missing Soundbox fields");
+        }
+    }
+}
+
+// Validators Factory
+class ValidatorFactory {
+    public static RequestValidator getValidator(ChannelType type) {
+        return switch (type) {
+            case EMAIL -> new EmailValidator();
+            case SMS -> new SMSValidator();
+            case SOUNDBOX -> new SoundboxValidator();
+        };
+    }
+}
+
+// Provider & Account Model
+class ProviderAccount {
+    UUID id = UUID.randomUUID();
+    boolean isActive;
+    public ProviderAccount(boolean active) {
+        this.isActive = active;
+    }
+}
+
+class Provider {
+    UUID id = UUID.randomUUID();
+    String name;
+    ChannelType channel;
+    List<ProviderAccount> accounts;
+
+    public Provider(String name, ChannelType channel, List<ProviderAccount> accounts) {
+        this.name = name;
+        this.channel = channel;
+        this.accounts = accounts;
+    }
+
+    public List<ProviderAccount> getActiveAccounts() {
+        List<ProviderAccount> result = new ArrayList<>();
+        for (ProviderAccount acc : accounts) {
+            if (acc.isActive) result.add(acc);
+        }
+        return result;
+    }
+}
+
+// Provider Manager (Singleton)
+class ProviderManager {
+    private static final ProviderManager instance = new ProviderManager();
+    private final Map<ChannelType, List<Provider>> channelProviders = new ConcurrentHashMap<>();
+
+    private ProviderManager() {}
+    public static ProviderManager getInstance() { return instance; }
+
+    public void registerProvider(Provider provider) {
+        channelProviders.computeIfAbsent(provider.channel, k -> new ArrayList<>()).add(provider);
+    }
+
+    public Optional<ProviderAccount> getRandomAccount(ChannelType channel) {
+        List<Provider> providers = channelProviders.getOrDefault(channel, Collections.emptyList());
+        List<ProviderAccount> candidates = new ArrayList<>();
+        for (Provider provider : providers) {
+            candidates.addAll(provider.getActiveAccounts());
+        }
+        if (candidates.isEmpty()) return Optional.empty();
+        return Optional.of(candidates.get(new Random().nextInt(candidates.size())));
+    }
+}
+
+// Channel Handlers
+class EmailHandler implements ChannelHandler {
+    public void dispatch(Map<String, String> data) {
+        System.out.println("Sending EMAIL to " + data.get("receiver"));
+    }
+}
+
+class SMSHandler implements ChannelHandler {
+    public void dispatch(Map<String, String> data) {
+        System.out.println("Sending SMS to " + data.get("mobile"));
+    }
+}
+
+class SoundboxHandler implements ChannelHandler {
+    public void dispatch(Map<String, String> data) {
+        System.out.println("Playing sound on Soundbox device " + data.get("deviceId"));
+    }
+}
+
+// Handler Factory
+class HandlerFactory {
+    public static ChannelHandler getHandler(ChannelType type) {
+        return switch (type) {
+            case EMAIL -> new EmailHandler();
+            case SMS -> new SMSHandler();
+            case SOUNDBOX -> new SoundboxHandler();
+        };
+    }
+}
+
+// Dispatcher Service
+class CommunicationDispatcher {
+    public void send(ChannelType channel, Map<String, String> requestData) {
+        RequestValidator validator = ValidatorFactory.getValidator(channel);
+        validator.validate(requestData);
+
+        Optional<ProviderAccount> accountOpt = ProviderManager.getInstance().getRandomAccount(channel);
+        if (accountOpt.isEmpty()) throw new RuntimeException("No active account available for channel: " + channel);
+
+        ChannelHandler handler = HandlerFactory.getHandler(channel);
+        handler.dispatch(requestData);
+    }
+}
+
+// Demo Runner
+public class Main {
+    public static void main(String[] args) {
+        ProviderManager pm = ProviderManager.getInstance();
+
+        pm.registerProvider(new Provider("SendGrid", ChannelType.EMAIL, List.of(new ProviderAccount(true))));
+        pm.registerProvider(new Provider("Twilio", ChannelType.SMS, List.of(new ProviderAccount(true))));
+        pm.registerProvider(new Provider("AmazonSoundbox", ChannelType.SOUNDBOX, List.of(new ProviderAccount(true))));
+
+        CommunicationDispatcher dispatcher = new CommunicationDispatcher();
+
+        dispatcher.send(ChannelType.EMAIL, Map.of(
+                "sender", "noreply@example.com",
+                "receiver", "user@example.com",
+                "subject", "Welcome",
+                "message", "Hello from our platform!"
+        ));
+
+        dispatcher.send(ChannelType.SMS, Map.of(
+                "mobile", "1234567890",
+                "message", "Your OTP is 1234"
+        ));
+
+        dispatcher.send(ChannelType.SOUNDBOX, Map.of(
+                "deviceId", "device-001",
+                "sound", "Beep-Beep"
+        ));
+    }
+}
+
+
+#####################
+SMS and Soundbox support is now added.
+✅ Design patterns used to impress in interviews:
+
+Factory Pattern: HandlerFactory, ValidatorFactory
+
+Strategy Pattern: ChannelHandler, RequestValidator interfaces
+
+Singleton Pattern: ProviderManager
+
+Optional Handling: For robust null-checks on providers

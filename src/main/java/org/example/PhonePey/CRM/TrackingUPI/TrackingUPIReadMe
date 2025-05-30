@@ -1,0 +1,124 @@
+package com.communication;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+// ==== MODEL LAYER ====
+class TrackingNode {
+    Map<String, TrackingNode> children = new HashMap<>();
+    int count = 0;
+}
+
+// ==== STORE LAYER ====
+interface TrackingStore {
+    void saveTracking(Integer id, List<String> tags);
+    List<String> removeTracking(Integer id);
+    int getPrefixCount(List<String> tags);
+}
+
+class InMemoryTrackingStore implements TrackingStore {
+    private final TrackingNode root = new TrackingNode();
+    private final Map<Integer, List<String>> idToTags = new ConcurrentHashMap<>();
+
+    @Override
+    public synchronized void saveTracking(Integer id, List<String> tags) {
+        if (idToTags.containsKey(id)) {
+            throw new IllegalArgumentException("Duplicate ID: " + id);
+        }
+        idToTags.put(id, tags);
+        TrackingNode curr = root;
+        for (String tag : tags) {
+            curr = curr.children.computeIfAbsent(tag, k -> new TrackingNode());
+            curr.count += 1;
+        }
+    }
+
+    @Override
+    public synchronized List<String> removeTracking(Integer id) {
+        List<String> tags = idToTags.remove(id);
+        if (tags == null) throw new IllegalArgumentException("Invalid ID: " + id);
+
+        TrackingNode curr = root;
+        for (String tag : tags) {
+            TrackingNode next = curr.children.get(tag);
+            if (next == null || next.count == 0) throw new IllegalStateException("Corrupt state");
+            next.count -= 1;
+            curr = next;
+        }
+        return tags;
+    }
+
+    @Override
+    public int getPrefixCount(List<String> tags) {
+        TrackingNode curr = root;
+        for (String tag : tags) {
+            curr = curr.children.get(tag);
+            if (curr == null) return 0;
+        }
+        return curr.count;
+    }
+}
+
+// ==== SERVICE LAYER ====
+class TrackingService {
+    private final TrackingStore store;
+    public TrackingService(TrackingStore store) {
+        this.store = store;
+    }
+
+    public void startTracking(int id, List<String> tags) {
+        store.saveTracking(id, tags);
+    }
+
+    public void stopTracking(int id) {
+        store.removeTracking(id);
+    }
+
+    public int getCounts(List<String> prefixTags) {
+        return store.getPrefixCount(prefixTags);
+    }
+}
+
+// ==== SINGLETON ACCESS ====
+class TrackingSystemFactory {
+    private static final TrackingService instance = new TrackingService(new InMemoryTrackingStore());
+    public static TrackingService getInstance() {
+        return instance;
+    }
+}
+
+// ==== DEMO RUNNER ====
+public class Main {
+    public static void main(String[] args) {
+        TrackingService tracker = TrackingSystemFactory.getInstance();
+
+        tracker.startTracking(1112, List.of("UPI", "Karnataka", "Bangalore"));
+        tracker.startTracking(2451, List.of("UPI", "Karnataka", "Mysore"));
+        tracker.startTracking(3421, List.of("UPI", "Rajasthan", "Jaipur"));
+        tracker.startTracking(1221, List.of("Wallet", "Karnataka", "Bangalore"));
+
+        System.out.println(tracker.getCounts(List.of("UPI")));                        // 3
+        System.out.println(tracker.getCounts(List.of("UPI", "Karnataka")));          // 2
+        System.out.println(tracker.getCounts(List.of("UPI", "Karnataka", "Bangalore"))); // 1
+        System.out.println(tracker.getCounts(List.of("Bangalore")));                 // 0
+
+        tracker.startTracking(4221, List.of("Wallet", "Karnataka", "Bangalore"));
+        tracker.stopTracking(1112);
+        tracker.stopTracking(2451);
+
+        System.out.println(tracker.getCounts(List.of("UPI")));                        // 1
+        System.out.println(tracker.getCounts(List.of("Wallet")));                    // 2
+        System.out.println(tracker.getCounts(List.of("UPI", "Karnataka", "Bangalore"))); // 0
+    }
+}
+
+
+
+##############################
+Summary:
+Operation	Time Complexity
+startTracking	O(k)
+stopTracking	O(k)
+getCounts	O(k)
+
+Where k = number of hierarchical tags (e.g., 3 for instrument/state/city).

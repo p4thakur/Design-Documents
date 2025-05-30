@@ -1,0 +1,469 @@
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+// --- Exceptions ---
+
+class ComplaintSystemException extends RuntimeException {
+    public ComplaintSystemException(String message) {
+        super(message);
+    }
+}
+
+class AgentNotFoundException extends ComplaintSystemException {
+    public AgentNotFoundException(String email) {
+        super("Agent not found: " + email);
+    }
+}
+
+class IssueAlreadyResolvedException extends ComplaintSystemException {
+    public IssueAlreadyResolvedException(UUID issueId) {
+        super("Issue already resolved: " + issueId);
+    }
+}
+
+class NoFreeAgentAvailableException extends ComplaintSystemException {
+    public NoFreeAgentAvailableException() {
+        super("No free agent available to assign the issue.");
+    }
+}
+
+// --- Models ---
+// Main.java
+import manager.AgentManager;
+import manager.IssueManager;
+import model.Agent;
+import model.Issue;
+import strategy.RoundRobinAssignmentStrategy;
+import observer.IssueQueueManager;
+
+import java.util.UUID;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        RoundRobinAssignmentStrategy strategy = new RoundRobinAssignmentStrategy();
+
+        AgentManager agentManager = new AgentManager(strategy);
+        IssueManager issueManager = new IssueManager(agentManager);
+        IssueQueueManager queueManager = new IssueQueueManager(agentManager);
+
+        agentManager.registerObserver(queueManager);
+
+        Agent agent1 = agentManager.createAgent("Alice");
+        Agent agent2 = agentManager.createAgent("Bob");
+
+        Issue issue1 = issueManager.createIssue("Login Issue", "Unable to login");
+        Issue issue2 = issueManager.createIssue("Payment Error", "Payment failed");
+        Issue issue3 = issueManager.createIssue("Page crash", "Page crashes on click");
+
+        issueManager.resolveIssue(agent1.getId(), issue1.getId(), "Reset password");
+        issueManager.resolveIssue(agent2.getId(), issue2.getId(), "Payment retried");
+
+        agentManager.releaseAgent(agent1);
+        agentManager.releaseAgent(agent2);
+    }
+}
+
+
+// model/Agent.java
+package model;
+
+import model.enums.AgentStatus;
+import model.enums.IssueStatus;
+import model.exceptions.AgentUnavailableException;
+
+import java.util.UUID;
+
+public class Agent {
+    private final UUID id;
+    private final String name;
+    private AgentStatus status;
+    private Issue currentIssue;
+
+    public Agent(String name) {
+        this.id = UUID.randomUUID();
+        this.name = name;
+        this.status = AgentStatus.AVAILABLE;
+    }
+
+    public void assignIssue(Issue issue) {
+        if (status != AgentStatus.AVAILABLE) throw new AgentUnavailableException(name);
+        this.currentIssue = issue;
+        this.status = AgentStatus.BUSY;
+        issue.setAssignedAgent(this);
+        issue.setStatus(IssueStatus.IN_PROGRESS);
+    }
+
+    public void resolveIssue(String resolutionNotes) {
+        if (currentIssue != null) {
+            currentIssue.resolve(resolutionNotes);
+            currentIssue = null;
+            status = AgentStatus.AVAILABLE;
+        }
+    }
+
+    public UUID getId() { return id; }
+    public String getName() { return name; }
+    public AgentStatus getStatus() { return status; }
+    public Issue getCurrentIssue() { return currentIssue; }
+}
+
+// model/Issue.java
+package model;
+
+import model.enums.IssueStatus;
+
+import java.util.*;
+
+public class Issue {
+    private final UUID id;
+    private final String title;
+    private final String description;
+    private IssueStatus status;
+    private Agent assignedAgent;
+    private final List<ResolutionHistoryEntry> resolutionHistory = new ArrayList<>();
+
+    public Issue(String title, String description) {
+        this.id = UUID.randomUUID();
+        this.title = title;
+        this.description = description;
+        this.status = IssueStatus.NEW;
+    }
+
+    public void setAssignedAgent(Agent agent) { this.assignedAgent = agent; }
+    public void setStatus(IssueStatus status) { this.status = status; }
+
+    public void resolve(String resolutionNotes) {
+        status = IssueStatus.RESOLVED;
+        resolutionHistory.add(new ResolutionHistoryEntry(assignedAgent, resolutionNotes));
+    }
+
+    public UUID getId() { return id; }
+    public String getTitle() { return title; }
+    public String getDescription() { return description; }
+    public IssueStatus getStatus() { return status; }
+    public Agent getAssignedAgent() { return assignedAgent; }
+    public List<ResolutionHistoryEntry> getResolutionHistory() { return resolutionHistory; }
+}
+
+// model/ResolutionHistoryEntry.java
+package model;
+
+import java.time.Instant;
+
+public class ResolutionHistoryEntry {
+    private final Agent resolvedBy;
+    private final String notes;
+    private final Instant timestamp;
+
+    public ResolutionHistoryEntry(Agent resolvedBy, String notes) {
+        this.resolvedBy = resolvedBy;
+        this.notes = notes;
+        this.timestamp = Instant.now();
+    }
+
+    public Agent getResolvedBy() { return resolvedBy; }
+    public String getNotes() { return notes; }
+    public Instant getTimestamp() { return timestamp; }
+}
+
+// model/enums/AgentStatus.java
+package model.enums;
+
+public enum AgentStatus {
+    AVAILABLE, BUSY
+}
+
+// model/enums/IssueStatus.java
+package model.enums;
+
+public enum IssueStatus {
+    NEW, IN_PROGRESS, RESOLVED
+}
+
+// model/exceptions/AgentUnavailableException.java
+package model.exceptions;
+
+public class AgentUnavailableException extends RuntimeException {
+    public AgentUnavailableException(String agentName) {
+        super("Agent " + agentName + " is not available");
+    }
+}
+
+// observer/AgentAvailabilityObserver.java
+package observer;
+
+import model.Agent;
+
+public interface AgentAvailabilityObserver {
+    void onAgentAvailable(Agent agent);
+}
+
+// observer/IssueQueueManager.java
+package observer;
+
+import model.Agent;
+import model.Issue;
+import strategy.AssignmentStrategy;
+
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+public class IssueQueueManager implements AgentAvailabilityObserver {
+    private final Queue<Issue> pendingIssues = new ConcurrentLinkedQueue<>();
+    private final AssignmentStrategy strategy;
+
+    public IssueQueueManager(AssignmentStrategy strategy) {
+        this.strategy = strategy;
+    }
+
+    public void queueIssue(Issue issue) {
+        pendingIssues.offer(issue);
+    }
+
+    @Override
+    public void onAgentAvailable(Agent agent) {
+        Issue issue = pendingIssues.poll();
+        if (issue != null) {
+            try {
+                agent.assignIssue(issue);
+                System.out.println("Auto-assigned issue " + issue.getTitle() + " to agent " + agent.getName());
+            } catch (Exception e) {
+                System.out.println("Failed to assign issue: " + e.getMessage());
+                pendingIssues.add(issue);
+            }
+        }
+    }
+}
+
+// manager/AgentManager.java
+package manager;
+
+import model.Agent;
+import model.enums.AgentStatus;
+import observer.AgentAvailabilityObserver;
+import strategy.AssignmentStrategy;
+
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class AgentManager {
+    private final ConcurrentHashMap<UUID, Agent> agents = new ConcurrentHashMap<>();
+    private final CopyOnWriteArrayList<AgentAvailabilityObserver> observers = new CopyOnWriteArrayList<>();
+    final AssignmentStrategy strategy;
+
+    public AgentManager(AssignmentStrategy strategy) {
+        this.strategy = strategy;
+    }
+
+    public Agent createAgent(String name) {
+        Agent agent = new Agent(name);
+        agents.put(agent.getId(), agent);
+        synchronized (strategy) {
+            strategy.addAgent(agent);
+        }
+        return agent;
+    }
+
+    public Agent getAgent(UUID id) {
+        return agents.get(id);
+    }
+
+    public void releaseAgent(Agent agent) {
+        // Resolve any current issue with auto-release note
+        agent.resolveIssue("Auto released");
+        notifyObservers(agent);
+    }
+
+    public void registerObserver(AgentAvailabilityObserver observer) {
+        observers.add(observer);
+    }
+
+    private void notifyObservers(Agent agent) {
+        for (AgentAvailabilityObserver observer : observers) {
+            observer.onAgentAvailable(agent);
+        }
+    }
+}
+
+
+// manager/IssueManager.java
+package manager;
+
+import model.Issue;
+import model.Agent;
+import strategy.AssignmentStrategy;
+
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class IssueManager {
+    private final ConcurrentHashMap<UUID, Issue> issues = new ConcurrentHashMap<>();
+    private final AgentManager agentManager;
+    private final AssignmentStrategy strategy;
+
+    public IssueManager(AgentManager agentManager) {
+        this.agentManager = agentManager;
+        this.strategy = agentManager.strategy;
+    }
+
+    public Issue createIssue(String title, String description) throws Exception {
+        Issue issue = new Issue(title, description);
+        issues.put(issue.getId(), issue);
+
+        synchronized (strategy) {
+            Agent agent = strategy.getNextAvailableAgent();
+            if (agent != null) {
+                agent.assignIssue(issue);
+            }
+        }
+        return issue;
+    }
+
+    public void resolveIssue(UUID agentId, UUID issueId, String notes) {
+        Agent agent = agentManager.getAgent(agentId);
+        if (agent != null) {
+            agent.resolveIssue(notes);
+        }
+    }
+
+    public Issue getIssue(UUID id) {
+        return issues.get(id);
+    }
+}
+
+// strategy/AssignmentStrategy.java
+package strategy;
+
+import model.Agent;
+
+public interface AssignmentStrategy {
+    void addAgent(Agent agent);
+    Agent getNextAvailableAgent();
+}
+
+// strategy/RoundRobinAssignmentStrategy.java
+package strategy;
+
+import model.Agent;
+import model.enums.AgentStatus;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class RoundRobinAssignmentStrategy implements AssignmentStrategy {
+    private final List<Agent> agents = new ArrayList<>();
+    private int index = 0;
+
+    @Override
+    public synchronized void addAgent(Agent agent) {
+        agents.add(agent);
+    }
+
+    @Override
+    public synchronized Agent getNextAvailableAgent() {
+        int attempts = agents.size();
+        while (attempts-- > 0) {
+            if (agents.isEmpty()) return null;
+            Agent agent = agents.get(index);
+            index = (index + 1) % agents.size();
+            if (agent.getStatus() == AgentStatus.AVAILABLE) return agent;
+        }
+        return null;
+    }
+}
+
+
+#####################################
+Key Improvements:
+Modular Design: Includes all relevant classes (Issue, Agent, Strategy, Managers) in a single model file as requested.
+
+Design Patterns Used:
+
+Singleton: For AgentManager and IssueManager.
+
+Strategy + Factory: For agent assignment strategies.
+
+Observer: Agent notifies observers (like UIs or logs) when issues are assigned/resolved.
+
+Thread-Safety: Uses synchronized, CopyOnWriteArrayList, and atomic operations where necessary.
+
+UUIDs: Used for issue IDs to avoid relying on transaction ID + timestamp uniqueness.
+
+Why are isFree() and canHandle() methods synchronized?
+isFree() checks the current status of the agent (FREE or BUSY).
+
+canHandle() checks if the agent has the skill required for the issue.
+
+However — Are these methods best synchronized?
+For isFree(), since it reads a simple enum status, volatile could be used instead to guarantee visibility without synchronization overhead.
+
+For canHandle(), since skills is a HashSet initialized once and never modified, it is effectively immutable and does not need synchronization for reads.
+
+Also, assignIssue and resolveIssue modify the status and should be synchronized (or use atomic variables).
+
+###################################
+public class HelpdeskException extends RuntimeException {
+    public HelpdeskException(String message) {
+        super(message);
+    }
+}
+
+public class AgentNotFoundException extends HelpdeskException {
+    public AgentNotFoundException(String agentEmail) {
+        super("Agent not found with email: " + agentEmail);
+    }
+}
+
+public class IssueNotFoundException extends HelpdeskException {
+    public IssueNotFoundException(UUID issueId) {
+        super("Issue not found with ID: " + issueId);
+    }
+}
+
+public class IssueAlreadyResolvedException extends HelpdeskException {
+    public IssueAlreadyResolvedException(UUID issueId) {
+        super("Issue already resolved with ID: " + issueId);
+    }
+}
+
+public class NoFreeAgentException extends HelpdeskException {
+    public NoFreeAgentException() {
+        super("No free agent available to assign the issue.");
+    }
+}
+
+public class AgentBusyException extends HelpdeskException {
+    public AgentBusyException(String agentEmail) {
+        super("Agent is currently busy: " + agentEmail);
+    }
+}
+
+public Agent getAgentByEmail(String email) {
+    for (Agent agent : agents) {
+        if (agent.getEmail().equalsIgnoreCase(email)) return agent;
+    }
+    throw new AgentNotFoundException(email);
+}
+
+public void resolveIssue(UUID issueId) {
+    Issue issue = issueMap.get(issueId);
+    if (issue == null) throw new IssueNotFoundException(issueId);
+    if (issue.getStatus() == IssueStatus.RESOLVED) throw new IssueAlreadyResolvedException(issueId);
+
+    Agent assignedAgent = issue.getAssignedAgent();
+    if (assignedAgent == null) throw new HelpdeskException("Issue is not assigned to any agent.");
+
+    assignedAgent.resolveIssue(issue);
+}
+
+Agent agent = assignmentStrategy.assign(agents, issue);
+if (agent == null) {
+    throw new NoFreeAgentException();
+}
+
+
+################
+Change code to inlcude  agen creation and
+issue creaion inside manager
