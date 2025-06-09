@@ -1,0 +1,293 @@
+Problem Overview
+Given:
+
+A list of currency conversion rates, e.g., ["USD", "GBP", 0.77] implies 1 USD = 0.77 GBP.
+
+A list of queries, each asking for the conversion rate from one currency to another.
+Objective:
+Determine the conversion rate for each query. If a conversion path doesn't exist, return -1.0.
+teps:
+
+Build the Graph:
+
+For each conversion rate, add two edges:
+
+From A to B with weight rate.
+
+From B to A with weight 1/rate.
+
+Process Queries:
+
+For each query, perform a Depth-First Search (DFS) or Breadth-First Search (BFS) to find a path from the source to the target currency.
+
+Multiply the weights along the path to compute the conversion rate.
+
+If no path exists, return -1.0
+
+import java.util.*;
+
+public class CurrencyConverter {
+
+    static class Pair {
+        String currency;
+        double rate;
+
+        Pair(String currency, double rate) {
+            this.currency = currency;
+            this.rate = rate;
+        }
+    }
+
+    public double[] calcConversion(List<List<String>> equations, double[] values, List<List<String>> queries) {
+        Map<String, List<Pair>> graph = new HashMap<>();
+
+        // Step 1: Build the graph
+        for (int i = 0; i < equations.size(); i++) {
+            String from = equations.get(i).get(0);
+            String to = equations.get(i).get(1);
+            double rate = values[i];
+
+            graph.putIfAbsent(from, new ArrayList<>());
+            graph.putIfAbsent(to, new ArrayList<>());
+
+            graph.get(from).add(new Pair(to, rate));
+            graph.get(to).add(new Pair(from, 1.0 / rate));
+        }
+
+        // Step 2: Process queries
+        double[] results = new double[queries.size()];
+        for (int i = 0; i < queries.size(); i++) {
+            String src = queries.get(i).get(0);
+            String dst = queries.get(i).get(1);
+
+            if (!graph.containsKey(src) || !graph.containsKey(dst)) {
+                results[i] = -1.0;
+            } else if (src.equals(dst)) {
+                results[i] = 1.0;
+            } else {
+                Set<String> visited = new HashSet<>();
+                results[i] = dfs(graph, src, dst, 1.0, visited);
+            }
+        }
+
+        return results;
+    }
+
+    private double dfs(Map<String, List<Pair>> graph, String curr, String target, double acc, Set<String> visited) {
+        if (curr.equals(target)) return acc;
+
+        visited.add(curr);
+
+        for (Pair neighbor : graph.get(curr)) {
+            if (!visited.contains(neighbor.currency)) {
+                double result = dfs(graph, neighbor.currency, target, acc * neighbor.rate, visited);
+                if (result != -1.0) return result;
+            }
+        }
+
+        return -1.0;
+    }
+
+    // Sample usage
+    public static void main(String[] args) {
+        CurrencyConverter solver = new CurrencyConverter();
+
+        List<List<String>> equations = List.of(
+                List.of("USD", "JPY"),
+                List.of("JPY", "CHN"),
+                List.of("CHN", "THAI")
+        );
+        double[] values = {100.0, 20.0, 200.0};
+
+        List<List<String>> queries = List.of(
+                List.of("USD", "CHN"),     // 100 * 20 = 2000
+                List.of("JPY", "THAI"),    // 20 * 200 = 4000
+                List.of("USD", "AUD")      // -1.0 (not in graph)
+        );
+
+        System.out.println(Arrays.toString(solver.calcConversion(equations, values, queries)));
+    }
+}
+###################################################################################
+
+Let's work on another probelm:
+given a list of transaction <from, to, amount>, I have to settle them and return who will pay whom, how much.
+
+[
+  ["A", "B", 10],
+  ["B", "C", 5],
+  ["C", "A", 5]
+]
+
+[
+  ["A", "B", 5]
+]
+Each index in debt[] represents a person’s net balance:
+
+debt[i] < 0: this person owes money.
+
+debt[j] > 0: this person is owed money.
+
+To settle:
+
+Match someone who owes (debt[i] < 0) with someone who is owed (debt[j] > 0).
+
+Transfer the minimum of -debt[i] and debt[j], adjust balances, and recurse.
+
+public class DebtSettlementWithTracking {
+    static class Transaction {
+        int from, to, amount;
+
+        Transaction(int from, int to, int amount) {
+            this.from = from;
+            this.to = to;
+            this.amount = amount;
+        }
+
+        public String toString() {
+            return from + " pays " + to + " $" + amount;
+        }
+    }
+
+    List<Transaction> result = new ArrayList<>();
+
+    public List<Transaction> settle(int[][] transactions) {
+        Map<Integer, Integer> balanceMap = new HashMap<>();
+        for (int[] t : transactions) {
+            int from = t[0], to = t[1], amt = t[2];
+            balanceMap.put(from, balanceMap.getOrDefault(from, 0) - amt);
+            balanceMap.put(to, balanceMap.getOrDefault(to, 0) + amt);
+        }
+
+        List<Integer> people = new ArrayList<>(balanceMap.keySet());
+        List<Integer> balances = new ArrayList<>();
+        List<Integer> ids = new ArrayList<>();
+        for (int id : people) {
+            int bal = balanceMap.get(id);
+            if (bal != 0) {
+                ids.add(id);
+                balances.add(bal);
+            }
+        }
+
+        dfs(0, balances, ids, new ArrayList<>());
+        return result;
+    }
+
+    private int dfs(int start, List<Integer> balances, List<Integer> ids, List<Transaction> temp) {
+        while (start < balances.size() && balances.get(start) == 0)
+            start++;
+        if (start == balances.size()) {
+            if (result.isEmpty() || temp.size() < result.size())
+                result = new ArrayList<>(temp); // found better solution
+            return 0;
+        }
+
+        int minTxns = Integer.MAX_VALUE;
+        for (int i = start + 1; i < balances.size(); i++) {
+            int a = balances.get(start), b = balances.get(i);
+            if (a * b < 0) {
+                // Settle
+                balances.set(i, b + a);
+
+                int from = a < 0 ? ids.get(start) : ids.get(i);
+                int to = a < 0 ? ids.get(i) : ids.get(start);
+                temp.add(new Transaction(from, to, Math.min(Math.abs(a), Math.abs(b))));
+
+                minTxns = Math.min(minTxns, 1 + dfs(start + 1, balances, ids, temp));
+
+                temp.remove(temp.size() - 1); // backtrack
+                balances.set(i, b); // backtrack
+            }
+        }
+        return minTxns;
+    }
+
+    public static void main(String[] args) {
+        int[][] transactions = {
+            {0, 1, 10},
+            {1, 2, 5},
+            {2, 0, 5}
+        };
+        DebtSettlementWithTracking solver = new DebtSettlementWithTracking();
+        List<Transaction> res = solver.settle(transactions);
+        for (Transaction t : res) {
+            System.out.println(t);
+        }
+    }
+}
+
+0 pays 1 $5
+
+
+################################################
+A server network is represented as a tree of g_nodes servers indexed from 1 to g_nodes and g_nodes - 1 edges where the ith edges connect the servers g_from[i] and g_to[i].
+The transfer time between any two connected servers is 1 unit.
+Given the graph g, find the maximum time taken to transfer the data between any two servers in the system.
+
+Example
+Suppose g_nodes = 3, g_from = [1, 2], g_to = [2, 3]
+The maximum time required to transfer data from 1 to 3 that takes 2 units of time. Hence, the answer is 2.
+
+
+###################################
+
+import java.util.*;
+
+public class ServerNetwork {
+    private Map<Integer, List<Integer>> graph = new HashMap<>();
+
+    public int findLongestPath(int g_nodes, int[] g_from, int[] g_to) {
+        // Build the tree graph
+        for (int i = 1; i <= g_nodes; i++) {
+            graph.put(i, new ArrayList<>());
+        }
+        for (int i = 0; i < g_from.length; i++) {
+            graph.get(g_from[i]).add(g_to[i]);
+            graph.get(g_to[i]).add(g_from[i]);
+        }
+
+        // Step 1: First DFS from any node (say 1)
+        int[] firstDFS = dfs(1, -1);
+        int farthestNode = firstDFS[0];
+
+        // Step 2: Second DFS from farthestNode to get the diameter
+        int[] secondDFS = dfs(farthestNode, -1);
+        return secondDFS[1]; // Distance
+    }
+
+    private int[] dfs(int node, int parent) {
+        int farthestNode = node;
+        int maxDist = 0;
+        for (int neighbor : graph.get(node)) {
+            if (neighbor != parent) {
+                int[] res = dfs(neighbor, node);
+                if (res[1] + 1 > maxDist) {
+                    maxDist = res[1] + 1;
+                    farthestNode = res[0];
+                }
+            }
+        }
+        return new int[]{farthestNode, maxDist};
+    }
+
+    public static void main(String[] args) {
+        ServerNetwork sn = new ServerNetwork();
+        int g_nodes = 3;
+        int[] g_from = {1, 2};
+        int[] g_to = {2, 3};
+        System.out.println(sn.findLongestPath(g_nodes, g_from, g_to)); // Output: 2
+    }
+}
+
+##############################
+
+
+
+
+
+
+
+
+
+

@@ -5,7 +5,8 @@ at this point it won't be simlar adding remove question. I will need to impmnet 
 
 Now when  they ask for transaction in above scenrio than. Again Ask him do this still want to follow LRU  in transsction
 ? So things will get complex(time consuming)
----> Look Need of  DLL was because of evication strathy  if that' not the case than below solution is perfect
+---> Look Need of  DLL was because of evication strathy
+--if that' not the case than below solution is perfect
 
 If they say inmemory data base hat below is solution
 
@@ -155,7 +156,8 @@ Part 2
 Enable transactions for your data store. A transaction starts with begin() and
 operations like READ, CREATE, UPDATE, DELETE can take place during this time.
 After these operation, the transaction is ended by either a commit()
-that commits everything permanently in the data store or rollback() that reverts everything that was performed during the transaction window.
+that commits everything permanently in the data store or rollback() that reverts
+everything that was performed during the transaction window.
 Notice that I highlighted the key-word everything.
 
 Example 1:

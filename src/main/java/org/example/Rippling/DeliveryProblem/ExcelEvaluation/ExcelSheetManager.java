@@ -50,6 +50,7 @@ public class ExcelSheetManager {
          if(visited.contains(name)){
              throw new IllegalArgumentException("Cyclic Depenendcy  for colums");
          };
+
          visited.add(name);
         String raw=cells.get(name).getRawValue();
         //if  empty return. 2: if its not stating with = than retunr
